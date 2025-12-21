@@ -1,0 +1,13 @@
+[package]
+name = "fireshot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+zbus = { version = "3", default-features = false, features = ["tokio"] }
+fireshot_core = { path = "../core" }
+fireshot_portal = { path = "../portal" }
+fireshot_gui = { path = "../gui" }
