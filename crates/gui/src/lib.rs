@@ -99,7 +99,7 @@ struct EffectShape {
     kind: EffectKind,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectKind {
     Pixelate,
     Blur,
@@ -155,11 +155,21 @@ struct EditorApp {
     tool_controls_rect: Option<egui::Rect>,
     text_input: Option<TextInput>,
     text_editor_rect: Option<egui::Rect>,
+    shapes_version: u64,
+    effect_previews: Vec<EffectPreview>,
 }
 
 struct TextInput {
     pos: egui::Pos2,
     text: String,
+}
+
+struct EffectPreview {
+    rect: [u32; 4],
+    kind: EffectKind,
+    size: u32,
+    shapes_version: u64,
+    texture: egui::TextureHandle,
 }
 
 impl EditorApp {
@@ -187,6 +197,8 @@ impl EditorApp {
             tool_controls_rect: None,
             text_input: None,
             text_editor_rect: None,
+            shapes_version: 0,
+            effect_previews: Vec::new(),
         }
     }
 
@@ -207,7 +219,7 @@ impl EditorApp {
         if !response.rect.contains(pointer_pos) {
             if pointer.any_released() {
                 if let Some(shape) = self.active_shape.take() {
-                    self.shapes.push(shape);
+                    self.push_shape(shape);
                 }
             }
             return;
@@ -317,7 +329,7 @@ impl EditorApp {
             }
         } else if pointer.primary_released() {
             if let Some(shape) = self.active_shape.take() {
-                self.shapes.push(shape);
+                self.push_shape(shape);
             }
         }
     }
@@ -467,11 +479,22 @@ impl EditorApp {
         false
     }
 
-    fn draw_overlay(&self, response: &egui::Response, painter: &egui::Painter) {
+    fn draw_overlay(&mut self, response: &egui::Response, painter: &egui::Painter) {
         let scale = response.ctx.pixels_per_point();
         let to_screen = |p: egui::Pos2| {
             response.rect.min + egui::vec2(p.x / scale, p.y / scale)
         };
+        let has_effects = self
+            .shapes
+            .iter()
+            .any(|s| matches!(s, Shape::Effect(_)))
+            || matches!(self.active_shape, Some(Shape::Effect(_)));
+        let base_preview = if has_effects {
+            Some(self.render_full_image_without_effects())
+        } else {
+            None
+        };
+        let mut effect_index = 0usize;
         if let Some(sel) = self.selection {
             let img_rect = response.rect;
             let sel_rect = egui::Rect::from_two_pos(to_screen(sel.rect.min), to_screen(sel.rect.max));
@@ -498,71 +521,26 @@ impl EditorApp {
             draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
             draw_selection_hud(painter, sel_rect, sel.rect, response.rect);
         }
-        let draw_shape = |shape: &Shape| match shape {
-            Shape::Stroke(stroke) => {
-                let points: Vec<egui::Pos2> = stroke.points.iter().copied().map(to_screen).collect();
-                painter.add(egui::Shape::line(
-                    points,
-                    egui::Stroke::new(stroke.size, stroke.color),
-                ));
-            }
-            Shape::Line(line) => {
-                painter.add(egui::Shape::line_segment(
-                    [to_screen(line.start), to_screen(line.end)],
-                    egui::Stroke::new(line.size, line.color),
-                ));
-            }
-            Shape::Rect(rect) => {
-                let rect_area = egui::Rect::from_two_pos(to_screen(rect.start), to_screen(rect.end));
-                painter.add(egui::Shape::rect_stroke(
-                    rect_area,
-                    0.0,
-                    egui::Stroke::new(rect.size, rect.color),
-                ));
-            }
-            Shape::Circle(circle) => {
-                let rect_area =
-                    egui::Rect::from_two_pos(to_screen(circle.start), to_screen(circle.end));
-                let points = ellipse_points(rect_area, 40);
-                painter.add(egui::Shape::line(
-                    points,
-                    egui::Stroke::new(circle.size, circle.color),
-                ));
-            }
-            Shape::Arrow(arrow) => {
-                let start = to_screen(arrow.start);
-                let end = to_screen(arrow.end);
-                painter.add(egui::Shape::line_segment(
-                    [start, end],
-                    egui::Stroke::new(arrow.size, arrow.color),
-                ));
-                draw_arrow_head(painter, start, end, arrow.size, arrow.color);
-            }
-            Shape::Text(text) => {
-                painter.text(
-                    to_screen(text.pos),
-                    egui::Align2::LEFT_TOP,
-                    text.text.as_str(),
-                    egui::FontId::proportional(text.size),
-                    text.color,
-                );
-            }
-            Shape::Effect(effect) => {
-                let rect_area =
-                    egui::Rect::from_two_pos(to_screen(effect.start), to_screen(effect.end));
-                painter.add(egui::Shape::rect_stroke(
-                    rect_area,
-                    0.0,
-                    egui::Stroke::new(1.5, egui::Color32::WHITE),
-                ));
-            }
-        };
-
-        for shape in &self.shapes {
-            draw_shape(shape);
+        let shapes = self.shapes.clone();
+        for shape in &shapes {
+            self.draw_shape_preview(
+                shape,
+                painter,
+                &to_screen,
+                base_preview.as_ref(),
+                &mut effect_index,
+                &response.ctx,
+            );
         }
-        if let Some(active) = &self.active_shape {
-            draw_shape(active);
+        if let Some(active) = self.active_shape.clone() {
+            self.draw_shape_preview(
+                &active,
+                painter,
+                &to_screen,
+                base_preview.as_ref(),
+                &mut effect_index,
+                &response.ctx,
+            );
         }
     }
 
@@ -639,11 +617,11 @@ impl EditorApp {
                         match action {
                             ToolAction::Tool(tool) => self.tool = tool,
                             ToolAction::Undo => {
-                                self.shapes.pop();
+                                self.pop_shape();
                             }
                             ToolAction::Copy => self.copy_and_close(ctx),
                             ToolAction::Save => self.save_image(),
-                            ToolAction::Clear => self.shapes.clear(),
+                            ToolAction::Clear => self.clear_shapes(),
                         }
                     }
                 });
@@ -779,6 +757,207 @@ impl EditorApp {
             });
     }
 
+    fn draw_shape_preview<F: Fn(egui::Pos2) -> egui::Pos2>(
+        &mut self,
+        shape: &Shape,
+        painter: &egui::Painter,
+        to_screen: &F,
+        base_preview: Option<&RgbaImage>,
+        effect_index: &mut usize,
+        ctx: &egui::Context,
+    ) {
+        match shape {
+            Shape::Stroke(stroke) => {
+                let points: Vec<egui::Pos2> =
+                    stroke.points.iter().copied().map(to_screen).collect();
+                painter.add(egui::Shape::line(
+                    points,
+                    egui::Stroke::new(stroke.size, stroke.color),
+                ));
+            }
+            Shape::Line(line) => {
+                painter.add(egui::Shape::line_segment(
+                    [to_screen(line.start), to_screen(line.end)],
+                    egui::Stroke::new(line.size, line.color),
+                ));
+            }
+            Shape::Rect(rect) => {
+                let rect_area = egui::Rect::from_two_pos(to_screen(rect.start), to_screen(rect.end));
+                painter.add(egui::Shape::rect_stroke(
+                    rect_area,
+                    0.0,
+                    egui::Stroke::new(rect.size, rect.color),
+                ));
+            }
+            Shape::Circle(circle) => {
+                let rect_area =
+                    egui::Rect::from_two_pos(to_screen(circle.start), to_screen(circle.end));
+                let points = ellipse_points(rect_area, 40);
+                painter.add(egui::Shape::line(
+                    points,
+                    egui::Stroke::new(circle.size, circle.color),
+                ));
+            }
+            Shape::Arrow(arrow) => {
+                let start = to_screen(arrow.start);
+                let end = to_screen(arrow.end);
+                painter.add(egui::Shape::line_segment(
+                    [start, end],
+                    egui::Stroke::new(arrow.size, arrow.color),
+                ));
+                draw_arrow_head(painter, start, end, arrow.size, arrow.color);
+            }
+            Shape::Text(text) => {
+                painter.text(
+                    to_screen(text.pos),
+                    egui::Align2::LEFT_TOP,
+                    text.text.as_str(),
+                    egui::FontId::proportional(text.size),
+                    text.color,
+                );
+            }
+            Shape::Effect(effect) => {
+                let rect_area =
+                    egui::Rect::from_two_pos(to_screen(effect.start), to_screen(effect.end));
+                let texture = base_preview
+                    .and_then(|base| self.ensure_effect_preview(ctx, base, effect, *effect_index));
+                if let Some(tex) = texture {
+                    painter.image(
+                        tex.id(),
+                        rect_area,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                } else {
+                    painter.add(egui::Shape::rect_stroke(
+                        rect_area,
+                        0.0,
+                        egui::Stroke::new(1.5, egui::Color32::WHITE),
+                    ));
+                }
+                *effect_index += 1;
+            }
+        }
+    }
+
+    fn push_shape(&mut self, shape: Shape) {
+        self.shapes.push(shape);
+        self.shapes_version = self.shapes_version.wrapping_add(1);
+        self.effect_previews.clear();
+    }
+
+    fn pop_shape(&mut self) {
+        if self.shapes.pop().is_some() {
+            self.shapes_version = self.shapes_version.wrapping_add(1);
+            self.effect_previews.clear();
+        }
+    }
+
+    fn clear_shapes(&mut self) {
+        if !self.shapes.is_empty() {
+            self.shapes.clear();
+            self.shapes_version = self.shapes_version.wrapping_add(1);
+            self.effect_previews.clear();
+        }
+    }
+
+    fn render_full_image_without_effects(&self) -> RgbaImage {
+        let mut img = self.base_image.clone();
+        for shape in &self.shapes {
+            match shape {
+                Shape::Stroke(stroke) => {
+                    for win in stroke.points.windows(2) {
+                        draw_line(&mut img, win[0], win[1], stroke.color, stroke.size);
+                    }
+                }
+                Shape::Line(line) => {
+                    draw_line(&mut img, line.start, line.end, line.color, line.size);
+                }
+                Shape::Arrow(arrow) => {
+                    draw_line(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
+                    draw_arrow_head_image(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
+                }
+                Shape::Rect(rect) => {
+                    let a = rect.start;
+                    let b = rect.end;
+                    let top_left = egui::pos2(a.x.min(b.x), a.y.min(b.y));
+                    let bottom_right = egui::pos2(a.x.max(b.x), a.y.max(b.y));
+                    let top_right = egui::pos2(bottom_right.x, top_left.y);
+                    let bottom_left = egui::pos2(top_left.x, bottom_right.y);
+                    draw_line(&mut img, top_left, top_right, rect.color, rect.size);
+                    draw_line(&mut img, top_right, bottom_right, rect.color, rect.size);
+                    draw_line(&mut img, bottom_right, bottom_left, rect.color, rect.size);
+                    draw_line(&mut img, bottom_left, top_left, rect.color, rect.size);
+                }
+                Shape::Circle(circle) => {
+                    draw_ellipse(&mut img, circle.start, circle.end, circle.color, circle.size);
+                }
+                Shape::Text(text) => {
+                    let scale = (text.size / 6.0).round().max(1.0) as u32;
+                    draw_text_bitmap(&mut img, text.pos, &text.text, text.color, scale);
+                }
+                Shape::Effect(_) => {}
+            }
+        }
+        img
+    }
+
+    fn ensure_effect_preview(
+        &mut self,
+        ctx: &egui::Context,
+        base: &RgbaImage,
+        effect: &EffectShape,
+        idx: usize,
+    ) -> Option<egui::TextureHandle> {
+        let rect = normalize_rect(egui::Rect::from_two_pos(effect.start, effect.end));
+        let (min_x, min_y, max_x, max_y) = rect_to_u32(base, rect)?;
+        let size_param = match effect.kind {
+            EffectKind::Pixelate => effect.size.round().max(4.0) as u32,
+            EffectKind::Blur => effect.size.round().max(2.0) as u32,
+        };
+        let rect_key = [min_x, min_y, max_x, max_y];
+        if let Some(preview) = self.effect_previews.get_mut(idx) {
+            if preview.rect == rect_key
+                && preview.kind == effect.kind
+                && preview.size == size_param
+                && preview.shapes_version == self.shapes_version
+            {
+                return Some(preview.texture.clone());
+            }
+        }
+
+        let mut sub = crop_image_exact(base, rect)?;
+        match effect.kind {
+            EffectKind::Pixelate => apply_pixelate_full(&mut sub, size_param),
+            EffectKind::Blur => apply_blur_full(&mut sub, size_param.min(12)),
+        }
+        let size = [sub.width() as usize, sub.height() as usize];
+        let pixels = sub.into_raw();
+        let image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+        let texture = if let Some(preview) = self.effect_previews.get_mut(idx) {
+            preview.texture.set(image, egui::TextureOptions::default());
+            preview.rect = rect_key;
+            preview.kind = effect.kind;
+            preview.size = size_param;
+            preview.shapes_version = self.shapes_version;
+            preview.texture.clone()
+        } else {
+            let tex = ctx.load_texture(
+                format!("effect_preview_{}", idx),
+                image,
+                egui::TextureOptions::default(),
+            );
+            self.effect_previews.push(EffectPreview {
+                rect: rect_key,
+                kind: effect.kind,
+                size: size_param,
+                shapes_version: self.shapes_version,
+                texture: tex.clone(),
+            });
+            tex
+        };
+        Some(texture)
+    }
     fn render_image(&self) -> RgbaImage {
         let mut img = self.render_full_image();
         if let Some(sel) = self.selection {
@@ -955,7 +1134,7 @@ impl eframe::App for EditorApp {
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
         let undo_requested = ctx.input_mut(|i| i.consume_shortcut(&undo_shortcut));
         if undo_requested {
-            self.shapes.pop();
+            self.pop_shape();
         }
 
         if self.tool != Tool::Select {
@@ -966,7 +1145,7 @@ impl eframe::App for EditorApp {
         if enter_pressed {
             if let Some(input) = self.text_input.take() {
                 if !input.text.trim().is_empty() {
-                    self.shapes.push(Shape::Text(TextShape {
+                    self.push_shape(Shape::Text(TextShape {
                         pos: input.pos,
                         text: input.text,
                         color: self.color,
@@ -1228,6 +1407,52 @@ fn apply_blur(img: &mut RgbaImage, rect: egui::Rect, radius: u32) {
             }
         }
     }
+}
+
+fn apply_pixelate_full(img: &mut RgbaImage, block: u32) {
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(img.width() as f32, img.height() as f32),
+    );
+    apply_pixelate(img, rect, block);
+}
+
+fn apply_blur_full(img: &mut RgbaImage, radius: u32) {
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(img.width() as f32, img.height() as f32),
+    );
+    apply_blur(img, rect, radius);
+}
+
+fn rect_to_u32(img: &RgbaImage, rect: egui::Rect) -> Option<(u32, u32, u32, u32)> {
+    let width = img.width() as f32;
+    let height = img.height() as f32;
+    let min_x = rect.min.x.floor().clamp(0.0, width) as u32;
+    let min_y = rect.min.y.floor().clamp(0.0, height) as u32;
+    let max_x = rect.max.x.ceil().clamp(0.0, width) as u32;
+    let max_y = rect.max.y.ceil().clamp(0.0, height) as u32;
+    if max_x <= min_x || max_y <= min_y {
+        return None;
+    }
+    Some((min_x, min_y, max_x, max_y))
+}
+
+fn crop_image_exact(img: &RgbaImage, rect: egui::Rect) -> Option<RgbaImage> {
+    let (min_x, min_y, max_x, max_y) = rect_to_u32(img, rect)?;
+    let out_w = max_x - min_x;
+    let out_h = max_y - min_y;
+    if out_w == 0 || out_h == 0 {
+        return None;
+    }
+    let mut out = RgbaImage::new(out_w, out_h);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let px = img.get_pixel(min_x + x, min_y + y);
+            out.put_pixel(x, y, *px);
+        }
+    }
+    Some(out)
 }
 
 fn draw_text_bitmap(
