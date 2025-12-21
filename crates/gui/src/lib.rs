@@ -5,6 +5,7 @@ use image::{DynamicImage, Rgba, RgbaImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tool {
+    Select,
     Pencil,
     Line,
     Rect,
@@ -40,15 +41,38 @@ enum Shape {
     Rect(RectShape),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SelectionRect {
+    rect: egui::Rect,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SelectionDrag {
+    Creating { start: egui::Pos2 },
+    Moving { offset: egui::Vec2 },
+    Resizing { corner: SelectionCorner },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SelectionCorner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 struct EditorApp {
     base_image: RgbaImage,
     texture_image: egui::ColorImage,
     texture: Option<egui::TextureHandle>,
     tool: Tool,
+    last_draw_tool: Tool,
     color: egui::Color32,
     size: f32,
     shapes: Vec<Shape>,
     active_shape: Option<Shape>,
+    selection: Option<SelectionRect>,
+    selection_drag: Option<SelectionDrag>,
     status: Option<String>,
 }
 
@@ -62,11 +86,14 @@ impl EditorApp {
             base_image: rgba,
             texture_image: image,
             texture: None,
-            tool: Tool::Pencil,
+            tool: Tool::Select,
+            last_draw_tool: Tool::Pencil,
             color: egui::Color32::from_rgb(255, 0, 0),
             size: 3.0,
             shapes: Vec::new(),
             active_shape: None,
+            selection: None,
+            selection_drag: None,
             status: None,
         }
     }
@@ -76,6 +103,7 @@ impl EditorApp {
     }
 
     fn handle_input(&mut self, response: &egui::Response) {
+        let scale = response.ctx.pixels_per_point();
         let pointer = response.ctx.input(|i| i.pointer.clone());
         let Some(pointer_pos) = pointer.hover_pos() else {
             return;
@@ -89,14 +117,28 @@ impl EditorApp {
             return;
         }
 
-        let img_pos = pointer_pos - response.rect.min;
+        let img_pos = (pointer_pos - response.rect.min) * scale;
         let img_pos = egui::pos2(
             img_pos.x.clamp(0.0, self.image_size().x),
             img_pos.y.clamp(0.0, self.image_size().y),
         );
 
+        if self.tool == Tool::Select {
+            self.handle_selection_input(&pointer, img_pos, scale);
+            return;
+        }
+
+        if let Some(sel) = self.selection {
+            if !sel.rect.contains(img_pos) {
+                return;
+            }
+        } else {
+            return;
+        }
+
         if pointer.primary_pressed() {
             self.active_shape = Some(match self.tool {
+                Tool::Select => return,
                 Tool::Pencil => Shape::Stroke(StrokeShape {
                     points: vec![img_pos],
                     color: self.color,
@@ -136,8 +178,120 @@ impl EditorApp {
         }
     }
 
+    fn handle_selection_input(
+        &mut self,
+        pointer: &egui::PointerState,
+        img_pos: egui::Pos2,
+        scale: f32,
+    ) {
+        let handle_radius = 6.0 * scale;
+        let image_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, self.image_size());
+
+        if pointer.primary_pressed() {
+            if let Some(sel) = self.selection {
+                if let Some(corner) = hit_corner(sel.rect, img_pos, handle_radius) {
+                    self.selection_drag = Some(SelectionDrag::Resizing { corner });
+                } else if sel.rect.contains(img_pos) {
+                    self.selection_drag =
+                        Some(SelectionDrag::Moving { offset: img_pos - sel.rect.min });
+                } else {
+                    self.selection_drag = Some(SelectionDrag::Creating { start: img_pos });
+                    self.selection = Some(SelectionRect {
+                        rect: egui::Rect::from_two_pos(img_pos, img_pos),
+                    });
+                }
+            } else {
+                self.selection_drag = Some(SelectionDrag::Creating { start: img_pos });
+                self.selection = Some(SelectionRect {
+                    rect: egui::Rect::from_two_pos(img_pos, img_pos),
+                });
+            }
+        } else if pointer.primary_down() {
+            if let Some(drag) = self.selection_drag {
+                match drag {
+                    SelectionDrag::Creating { start } => {
+                        let rect = egui::Rect::from_two_pos(start, img_pos);
+                        self.selection = Some(SelectionRect { rect: rect.intersect(image_rect) });
+                    }
+                    SelectionDrag::Moving { offset } => {
+                        if let Some(sel) = self.selection {
+                            let size = sel.rect.size();
+                            let mut min = img_pos - offset;
+                            let max_x = (self.image_size().x - size.x).max(0.0);
+                            let max_y = (self.image_size().y - size.y).max(0.0);
+                            min.x = min.x.clamp(0.0, max_x);
+                            min.y = min.y.clamp(0.0, max_y);
+                            let rect = egui::Rect::from_min_size(min, size);
+                            self.selection = Some(SelectionRect { rect });
+                        }
+                    }
+                    SelectionDrag::Resizing { corner } => {
+                        if let Some(sel) = self.selection {
+                            let mut rect = sel.rect;
+                            match corner {
+                                SelectionCorner::TopLeft => {
+                                    rect.min = img_pos;
+                                }
+                                SelectionCorner::TopRight => {
+                                    rect.min.y = img_pos.y;
+                                    rect.max.x = img_pos.x;
+                                }
+                                SelectionCorner::BottomLeft => {
+                                    rect.min.x = img_pos.x;
+                                    rect.max.y = img_pos.y;
+                                }
+                                SelectionCorner::BottomRight => {
+                                    rect.max = img_pos;
+                                }
+                            }
+                            rect = normalize_rect(rect);
+                            rect = rect.intersect(image_rect);
+                            rect = normalize_rect(rect);
+                            self.selection = Some(SelectionRect { rect });
+                        }
+                    }
+                }
+            }
+        } else if pointer.primary_released() {
+            self.selection_drag = None;
+            if let Some(sel) = self.selection {
+                if sel.rect.width() < 1.0 || sel.rect.height() < 1.0 {
+                    self.selection = None;
+                }
+            }
+        }
+    }
+
     fn draw_overlay(&self, response: &egui::Response, painter: &egui::Painter) {
-        let to_screen = |p: egui::Pos2| p + response.rect.min.to_vec2();
+        let scale = response.ctx.pixels_per_point();
+        let to_screen = |p: egui::Pos2| {
+            response.rect.min + egui::vec2(p.x / scale, p.y / scale)
+        };
+        if let Some(sel) = self.selection {
+            let img_rect = response.rect;
+            let sel_rect = egui::Rect::from_two_pos(to_screen(sel.rect.min), to_screen(sel.rect.max));
+            let dim_color = egui::Color32::from_rgba_premultiplied(0, 0, 0, 160);
+
+            let top = egui::Rect::from_min_max(img_rect.min, egui::pos2(img_rect.max.x, sel_rect.min.y));
+            let bottom =
+                egui::Rect::from_min_max(egui::pos2(img_rect.min.x, sel_rect.max.y), img_rect.max);
+            let left = egui::Rect::from_min_max(
+                egui::pos2(img_rect.min.x, sel_rect.min.y),
+                egui::pos2(sel_rect.min.x, sel_rect.max.y),
+            );
+            let right = egui::Rect::from_min_max(
+                egui::pos2(sel_rect.max.x, sel_rect.min.y),
+                egui::pos2(img_rect.max.x, sel_rect.max.y),
+            );
+
+            painter.rect_filled(top, 0.0, dim_color);
+            painter.rect_filled(bottom, 0.0, dim_color);
+            painter.rect_filled(left, 0.0, dim_color);
+            painter.rect_filled(right, 0.0, dim_color);
+
+            painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+            draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
+        }
         let draw_shape = |shape: &Shape| match shape {
             Shape::Stroke(stroke) => {
                 let points: Vec<egui::Pos2> = stroke.points.iter().copied().map(to_screen).collect();
@@ -171,6 +325,14 @@ impl EditorApp {
     }
 
     fn render_image(&self) -> RgbaImage {
+        let mut img = self.render_full_image();
+        if let Some(sel) = self.selection {
+            img = crop_image(&img, sel.rect);
+        }
+        img
+    }
+
+    fn render_full_image(&self) -> RgbaImage {
         let mut img = self.base_image.clone();
         for shape in &self.shapes {
             match shape {
@@ -272,6 +434,7 @@ impl eframe::App for EditorApp {
             ui.horizontal(|ui| {
                 ui.label("Fireshot");
                 ui.separator();
+                ui.selectable_value(&mut self.tool, Tool::Select, "Select");
                 ui.selectable_value(&mut self.tool, Tool::Pencil, "Pencil");
                 ui.selectable_value(&mut self.tool, Tool::Line, "Line");
                 ui.selectable_value(&mut self.tool, Tool::Rect, "Rect");
@@ -296,28 +459,22 @@ impl eframe::App for EditorApp {
             }
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both().show(ui, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(ctx, |ui| {
                 if let Some(texture) = &self.texture {
-                    let avail = ui.available_size();
-                    let image_size = texture.size_vec2();
-                    let offset = (avail - image_size) * 0.5;
-                    let offset = egui::vec2(offset.x.max(0.0), offset.y.max(0.0));
-                    if offset.y > 0.0 {
-                        ui.add_space(offset.y);
-                    }
-                    let response = ui.horizontal(|ui| {
-                        if offset.x > 0.0 {
-                            ui.add_space(offset.x);
-                        }
-                        ui.image(texture)
-                    }).inner;
+                    let scale = ctx.pixels_per_point();
+                    let image_size = self.image_size() / scale;
+                    let response = ui.add(
+                        egui::Image::new(texture)
+                            .fit_to_exact_size(image_size)
+                            .sense(egui::Sense::click_and_drag()),
+                    );
                     let painter = ui.painter();
                     self.handle_input(&response);
                     self.draw_overlay(&response, painter);
                 }
             });
-        });
 
         let copy_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::C);
         let copy_shortcut_shift =
@@ -345,6 +502,15 @@ impl eframe::App for EditorApp {
             self.shapes.pop();
         }
 
+        if self.tool != Tool::Select {
+            self.last_draw_tool = self.tool;
+        }
+
+        let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+        if enter_pressed && self.tool == Tool::Select && self.selection.is_some() {
+            self.tool = self.last_draw_tool;
+        }
+
         let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if esc_pressed {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -354,12 +520,13 @@ impl eframe::App for EditorApp {
 
 pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
     let mut options = eframe::NativeOptions::default();
-    let min_size = egui::vec2(640.0, 480.0);
-    let image_size = egui::vec2(image.width() as f32, image.height() as f32);
-    let window_size = egui::vec2(
-        image_size.x.max(min_size.x),
-        image_size.y.max(min_size.y),
-    );
+    options.viewport = egui::ViewportBuilder::default()
+        .with_title("Fireshot (Wayland MVP)")
+        .with_app_id("org.fireshot.Fireshot")
+        .with_fullscreen(true)
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_always_on_top();
     #[cfg(target_os = "linux")]
     {
         options.event_loop_builder = Some(Box::new(|builder| {
@@ -367,9 +534,6 @@ pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
             winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(builder, true);
         }));
     }
-    options.window_builder = Some(Box::new(move |builder| {
-        builder.with_inner_size(window_size).with_min_inner_size(min_size)
-    }));
     eframe::run_native(
         "Fireshot (Wayland MVP)",
         options,
@@ -458,6 +622,65 @@ fn try_xclip(mime: &str, bytes: &[u8]) -> Result<(), String> {
     } else {
         Err(format!("xclip exited with {}", status))
     }
+}
+
+fn normalize_rect(rect: egui::Rect) -> egui::Rect {
+    let min = egui::pos2(rect.min.x.min(rect.max.x), rect.min.y.min(rect.max.y));
+    let max = egui::pos2(rect.min.x.max(rect.max.x), rect.min.y.max(rect.max.y));
+    egui::Rect::from_min_max(min, max)
+}
+
+fn hit_corner(rect: egui::Rect, pos: egui::Pos2, radius: f32) -> Option<SelectionCorner> {
+    let radius_sq = radius * radius;
+    let corners = [
+        (rect.min, SelectionCorner::TopLeft),
+        (egui::pos2(rect.max.x, rect.min.y), SelectionCorner::TopRight),
+        (egui::pos2(rect.min.x, rect.max.y), SelectionCorner::BottomLeft),
+        (rect.max, SelectionCorner::BottomRight),
+    ];
+    for (corner_pos, corner) in corners {
+        let dx = pos.x - corner_pos.x;
+        let dy = pos.y - corner_pos.y;
+        if dx * dx + dy * dy <= radius_sq {
+            return Some(corner);
+        }
+    }
+    None
+}
+
+fn draw_handles(painter: &egui::Painter, rect: egui::Rect, radius: f32, color: egui::Color32) {
+    let corners = [
+        rect.min,
+        egui::pos2(rect.max.x, rect.min.y),
+        egui::pos2(rect.min.x, rect.max.y),
+        rect.max,
+    ];
+    for corner in corners {
+        painter.circle_filled(corner, radius, color);
+    }
+}
+
+fn crop_image(img: &RgbaImage, rect: egui::Rect) -> RgbaImage {
+    let width = img.width() as f32;
+    let height = img.height() as f32;
+    let min_x = rect.min.x.floor().clamp(0.0, width) as u32;
+    let min_y = rect.min.y.floor().clamp(0.0, height) as u32;
+    let max_x = rect.max.x.ceil().clamp(0.0, width) as u32;
+    let max_y = rect.max.y.ceil().clamp(0.0, height) as u32;
+    let out_w = max_x.saturating_sub(min_x);
+    let out_h = max_y.saturating_sub(min_y);
+    if out_w == 0 || out_h == 0 {
+        return img.clone();
+    }
+
+    let mut out = RgbaImage::new(out_w, out_h);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let px = img.get_pixel(min_x + x, min_y + y);
+            out.put_pixel(x, y, *px);
+        }
+    }
+    out
 }
 
 fn is_wayland() -> bool {

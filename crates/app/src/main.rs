@@ -20,7 +20,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Interactive capture with editor window.
+    /// Capture fullscreen for editor (selection happens in the editor).
     Gui {
         /// Delay in milliseconds before requesting capture.
         #[arg(short, long, default_value_t = 0)]
@@ -73,7 +73,7 @@ fn main() -> Result<(), CaptureError> {
                 std::thread::sleep(std::time::Duration::from_millis(req.delay_ms));
             }
 
-            let captured = run_async(&rt, fireshot_portal::capture_interactive())?;
+            let captured = run_async(&rt, fireshot_portal::capture_fullscreen())?;
 
             if let Some(save_path) = path.as_ref() {
                 captured
