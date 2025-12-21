@@ -1,8 +1,8 @@
-# Fireshot Wayland (Rust) - MVP
+# Fireshot Wayland (Rust)
 
 This is an early rewrite focused on Wayland via xdg-desktop-portal (compositor independent).
 
-## MVP scope
+## Scope
 
 - Capture via xdg-desktop-portal Screenshot (interactive selection)
 - Optional save to file

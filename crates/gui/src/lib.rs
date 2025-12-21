@@ -1216,7 +1216,7 @@ impl eframe::App for EditorApp {
 pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
     let mut options = eframe::NativeOptions::default();
     options.viewport = egui::ViewportBuilder::default()
-        .with_title("Fireshot (Wayland MVP)")
+        .with_title("Fireshot (Wayland)")
         .with_app_id("org.fireshot.Fireshot")
         .with_fullscreen(true)
         .with_decorations(false)
@@ -1230,7 +1230,7 @@ pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
         }));
     }
     eframe::run_native(
-        "Fireshot (Wayland MVP)",
+        "Fireshot (Wayland)",
         options,
         Box::new(|_cc| Box::new(EditorApp::new(image))),
     )

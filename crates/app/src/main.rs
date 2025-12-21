@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use fireshot_core::{CaptureError, CaptureRequest};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Tray, TrayService};
@@ -10,8 +10,9 @@ use zbus::dbus_interface;
 #[command(
     name = "fireshot",
     version,
-    about = "Wayland-first Fireshot rewrite (MVP)",
-    after_help = "Examples:\n  fireshot gui\n  fireshot gui -d 2000 -p /tmp/cap.png\n  fireshot full -p /tmp/cap.png\n  fireshot full --edit\n\nPortal notes:\n  Requires xdg-desktop-portal and a backend (wlr/gnome/kde)."
+    about = "Wayland-first Fireshot rewrite",
+    after_help = "Examples:\n  fireshot gui\n  fireshot gui -d 2000 -p /tmp/cap.png\n  fireshot full -p /tmp/cap.png\n  fireshot full --edit\n\nPortal notes:\n  Requires xdg-desktop-portal and a backend (wlr/gnome/kde).",
+    arg_required_else_help = true
 )]
 struct Cli {
     #[command(subcommand)]
@@ -58,7 +59,11 @@ fn main() -> Result<(), CaptureError> {
         .map_err(|e| CaptureError::Io(e.to_string()))?;
 
     let cli = Cli::parse();
-    let command = cli.command.unwrap_or(Command::Gui { delay: 0, path: None });
+    let Some(command) = cli.command else {
+        Cli::command().print_help().ok();
+        println!();
+        return Ok(());
+    };
 
     match command {
         Command::Diagnose { ping } => {
