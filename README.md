@@ -81,10 +81,10 @@ on `XDG_CURRENT_DESKTOP` unless `portals.conf` overrides it.
 ## Install
 
 ```bash
-cargo build --release
+cargo install --path .
 ```
 
-Binary: `./target/release/fireshot`
+Binary: `fireshot` (in your cargo bin path)
 
 ## Usage
 
