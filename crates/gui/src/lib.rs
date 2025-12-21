@@ -225,7 +225,8 @@ impl EditorApp {
             return;
         }
 
-        let img_pos = (pointer_pos - response.rect.min) * scale;
+        let img_pos_vec = (pointer_pos - response.rect.min) * scale;
+        let img_pos = egui::pos2(img_pos_vec.x, img_pos_vec.y);
         let img_pos = egui::pos2(
             img_pos.x.clamp(0.0, self.image_size().x),
             img_pos.y.clamp(0.0, self.image_size().y),
@@ -521,6 +522,8 @@ impl EditorApp {
             draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
             draw_selection_hud(painter, sel_rect, sel.rect, response.rect);
         }
+
+        self.draw_cursor_brush_preview(response, scale, painter);
         let shapes = self.shapes.clone();
         for shape in &shapes {
             self.draw_shape_preview(
@@ -542,6 +545,45 @@ impl EditorApp {
                 &response.ctx,
             );
         }
+    }
+
+    fn draw_cursor_brush_preview(
+        &self,
+        response: &egui::Response,
+        scale: f32,
+        painter: &egui::Painter,
+    ) {
+        if matches!(self.tool, Tool::Select) || self.text_input.is_some() {
+            return;
+        }
+        let Some(pointer_pos) = response.ctx.input(|i| i.pointer.hover_pos()) else {
+            return;
+        };
+        if self.is_over_ui(pointer_pos) {
+            return;
+        }
+        if !response.rect.contains(pointer_pos) {
+            return;
+        }
+        let img_pos_vec = (pointer_pos - response.rect.min) * scale;
+        let img_pos = egui::pos2(img_pos_vec.x, img_pos_vec.y);
+        if let Some(sel) = self.selection {
+            if !sel.rect.contains(img_pos) {
+                return;
+            }
+        } else {
+            return;
+        }
+
+        let mut color = self.color;
+        if matches!(self.tool, Tool::Marker) {
+            color = with_alpha(self.color, 120);
+        }
+        if matches!(self.tool, Tool::Pixelate | Tool::Blur) {
+            color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200);
+        }
+        let radius = (self.size.max(1.0) / scale) * 0.5;
+        painter.circle_stroke(pointer_pos, radius.max(1.0), egui::Stroke::new(1.0, color));
     }
 
     fn show_tool_buttons(&mut self, ctx: &egui::Context) {
