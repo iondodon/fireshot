@@ -354,6 +354,12 @@ impl eframe::App for EditorApp {
 
 pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
     let mut options = eframe::NativeOptions::default();
+    let min_size = egui::vec2(640.0, 480.0);
+    let image_size = egui::vec2(image.width() as f32, image.height() as f32);
+    let window_size = egui::vec2(
+        image_size.x.max(min_size.x),
+        image_size.y.max(min_size.y),
+    );
     #[cfg(target_os = "linux")]
     {
         options.event_loop_builder = Some(Box::new(|builder| {
@@ -361,6 +367,9 @@ pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
             winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(builder, true);
         }));
     }
+    options.window_builder = Some(Box::new(move |builder| {
+        builder.with_inner_size(window_size).with_min_inner_size(min_size)
+    }));
     eframe::run_native(
         "Fireshot (Wayland MVP)",
         options,

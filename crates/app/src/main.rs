@@ -32,6 +32,9 @@ enum Command {
         /// Save the capture to a path.
         #[arg(short, long)]
         path: Option<String>,
+        /// Open the editor after capture.
+        #[arg(long, default_value_t = false)]
+        edit: bool,
     },
     /// Run DBus daemon to handle capture requests.
     Daemon,
@@ -78,7 +81,7 @@ fn main() -> Result<(), CaptureError> {
                 fireshot_gui::run_viewer(captured.image)?;
             }
         }
-        Command::Full { delay, path } => {
+        Command::Full { delay, path, edit } => {
             let req = CaptureRequest {
                 delay_ms: delay,
                 ..Default::default()
@@ -88,11 +91,21 @@ fn main() -> Result<(), CaptureError> {
             }
 
             let captured = run_async(&rt, fireshot_portal::capture_fullscreen())?;
-            let save_path = path.unwrap_or_else(|| "screenshot.png".to_string());
-            captured
-                .image
-                .save(&save_path)
-                .map_err(|e| CaptureError::Io(e.to_string()))?;
+            if let Some(save_path) = path.as_ref() {
+                captured
+                    .image
+                    .save(save_path)
+                    .map_err(|e| CaptureError::Io(e.to_string()))?;
+            }
+            if edit {
+                fireshot_gui::run_viewer(captured.image)?;
+            } else if path.is_none() {
+                let save_path = "screenshot.png".to_string();
+                captured
+                    .image
+                    .save(&save_path)
+                    .map_err(|e| CaptureError::Io(e.to_string()))?;
+            }
         }
         Command::Daemon => {
             run_daemon(&rt)?;
@@ -202,7 +215,12 @@ impl FireshotService {
 
     fn full(&self, delay_ms: u64, path: String) {
         let path = if path.is_empty() { None } else { Some(path) };
-        spawn_capture(CaptureKind::Full { delay_ms, path });
+        spawn_capture(CaptureKind::Full { delay_ms, path, edit: false });
+    }
+
+    fn full_gui(&self, delay_ms: u64, path: String) {
+        let path = if path.is_empty() { None } else { Some(path) };
+        spawn_capture(CaptureKind::Full { delay_ms, path, edit: true });
     }
 
     fn quit(&self) {
@@ -218,12 +236,12 @@ impl FireshotService {
 
 enum CaptureKind {
     Gui { delay_ms: u64, path: Option<String> },
-    Full { delay_ms: u64, path: Option<String> },
+    Full { delay_ms: u64, path: Option<String>, edit: bool },
 }
 
 enum DaemonCommand {
     Gui,
-    Full,
+    FullEdit,
     Quit,
 }
 
@@ -263,7 +281,7 @@ impl Tray for FireshotTray {
                 label: "Full Screen".into(),
                 icon_name: "display".into(),
                 activate: Box::new(|this: &mut FireshotTray| {
-                    let _ = this.cmd_tx.send(DaemonCommand::Full);
+                    let _ = this.cmd_tx.send(DaemonCommand::FullEdit);
                 }),
                 ..Default::default()
             }
@@ -303,13 +321,16 @@ fn spawn_capture(kind: CaptureKind) {
                     cmd.arg("-p").arg(path);
                 }
             }
-            CaptureKind::Full { delay_ms, path } => {
+            CaptureKind::Full { delay_ms, path, edit } => {
                 cmd.arg("full");
                 if delay_ms > 0 {
                     cmd.arg("-d").arg(delay_ms.to_string());
                 }
                 if let Some(path) = path {
                     cmd.arg("-p").arg(path);
+                }
+                if edit {
+                    cmd.arg("--edit");
                 }
             }
         }
@@ -351,8 +372,8 @@ fn run_daemon(rt: &tokio::runtime::Runtime) -> Result<(), CaptureError> {
                     DaemonCommand::Gui => {
                         spawn_capture(CaptureKind::Gui { delay_ms: 0, path: None });
                     }
-                    DaemonCommand::Full => {
-                        spawn_capture(CaptureKind::Full { delay_ms: 0, path: None });
+                    DaemonCommand::FullEdit => {
+                        spawn_capture(CaptureKind::Full { delay_ms: 0, path: None, edit: true });
                     }
                     DaemonCommand::Quit => break,
                 },
