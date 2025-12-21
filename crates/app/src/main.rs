@@ -7,7 +7,12 @@ use tokio::sync::{mpsc, oneshot};
 use zbus::dbus_interface;
 
 #[derive(Parser)]
-#[command(name = "fireshot", version, about = "Wayland-first Fireshot rewrite (MVP)")]
+#[command(
+    name = "fireshot",
+    version,
+    about = "Wayland-first Fireshot rewrite (MVP)",
+    after_help = "Examples:\n  fireshot gui\n  fireshot gui -d 2000 -p /tmp/cap.png\n  fireshot full -p /tmp/cap.png\n  fireshot full --edit\n\nPortal notes:\n  Requires xdg-desktop-portal and a backend (wlr/gnome/kde)."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
