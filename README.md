@@ -58,7 +58,7 @@ Fireshot uses xdg-desktop-portal for screenshots. If capture fails, check:
    - GNOME → `xdg-desktop-portal-gnome`
    - KDE → `xdg-desktop-portal-kde`
 
-4. (Optional) Override backend selection with `portals.conf`:
+4. Required: Override backend selection with `portals.conf` in `~/.config/xdg-desktop-portal/portals.conf`:
 
    ```ini
    # ~/.config/xdg-desktop-portal/portals.conf
@@ -69,8 +69,8 @@ Fireshot uses xdg-desktop-portal for screenshots. If capture fails, check:
    default=wlr;gtk;
    ```
 
-Note: If multiple backends are installed, the portal will auto-select one based
-on `XDG_CURRENT_DESKTOP` unless `portals.conf` overrides it.
+Note: On some desktops (including niri), the portal auto-selection can pick
+the wrong backend. The `portals.conf` override is required to ensure wlr is used.
 
 5. Run built-in diagnostics:
 
