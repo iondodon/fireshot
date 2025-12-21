@@ -81,7 +81,7 @@ on `XDG_CURRENT_DESKTOP` unless `portals.conf` overrides it.
 ## Install
 
 ```bash
-cargo install --path .
+cargo install --path crates/app
 ```
 
 Binary: `fireshot` (in your cargo bin path)
