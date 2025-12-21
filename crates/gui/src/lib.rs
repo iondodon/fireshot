@@ -344,11 +344,23 @@ impl eframe::App for EditorApp {
         if undo_requested {
             self.shapes.pop();
         }
+
+        let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if esc_pressed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 }
 
 pub fn run_viewer(image: DynamicImage) -> Result<(), CaptureError> {
-    let options = eframe::NativeOptions::default();
+    let mut options = eframe::NativeOptions::default();
+    #[cfg(target_os = "linux")]
+    {
+        options.event_loop_builder = Some(Box::new(|builder| {
+            winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(builder, true);
+            winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(builder, true);
+        }));
+    }
     eframe::run_native(
         "Fireshot (Wayland MVP)",
         options,

@@ -16,6 +16,28 @@ cargo run -p fireshot -- gui -d 2000 -p /tmp/capture.png
 cargo run -p fireshot -- full -p /tmp/capture.png
 ```
 
+## Daemon + DBus
+
+Run a DBus daemon so other apps/scripts can trigger captures:
+
+```sh
+./target/release/fireshot daemon
+```
+
+DBus service:
+
+- `org.fireshot.Fireshot`
+- `/org/fireshot/Fireshot`
+
+Methods:
+
+- `gui(delay_ms: u64, path: String)`
+- `full(delay_ms: u64, path: String)`
+- `quit()`
+- `version() -> String`
+
+Tray icon: available in daemon mode (uses StatusNotifierItem).
+
 ## Wayland portal setup (required)
 
 This app relies on `xdg-desktop-portal` and a compositor-specific backend.

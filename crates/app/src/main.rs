@@ -1,5 +1,10 @@
 use clap::{Parser, Subcommand};
 use fireshot_core::{CaptureError, CaptureRequest};
+use ksni::menu::{MenuItem, StandardItem};
+use ksni::{Tray, TrayService};
+use log::{debug, error};
+use tokio::sync::{mpsc, oneshot};
+use zbus::dbus_interface;
 
 #[derive(Parser)]
 #[command(name = "fireshot", version, about = "Wayland-first Fireshot rewrite (MVP)")]
@@ -28,6 +33,8 @@ enum Command {
         #[arg(short, long)]
         path: Option<String>,
     },
+    /// Run DBus daemon to handle capture requests.
+    Daemon,
     /// Print portal and environment diagnostics.
     Diagnose {
         /// Attempt a Screenshot portal call (will prompt).
@@ -86,6 +93,9 @@ fn main() -> Result<(), CaptureError> {
                 .image
                 .save(&save_path)
                 .map_err(|e| CaptureError::Io(e.to_string()))?;
+        }
+        Command::Daemon => {
+            run_daemon(&rt)?;
         }
     }
 
@@ -177,4 +187,177 @@ fn run_async<T>(
     future: impl std::future::Future<Output = Result<T, CaptureError>>,
 ) -> Result<T, CaptureError> {
     rt.block_on(future)
+}
+
+struct FireshotService {
+    shutdown: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+}
+
+#[dbus_interface(name = "org.fireshot.Fireshot")]
+impl FireshotService {
+    fn gui(&self, delay_ms: u64, path: String) {
+        let path = if path.is_empty() { None } else { Some(path) };
+        spawn_capture(CaptureKind::Gui { delay_ms, path });
+    }
+
+    fn full(&self, delay_ms: u64, path: String) {
+        let path = if path.is_empty() { None } else { Some(path) };
+        spawn_capture(CaptureKind::Full { delay_ms, path });
+    }
+
+    fn quit(&self) {
+        if let Some(sender) = self.shutdown.lock().ok().and_then(|mut s| s.take()) {
+            let _ = sender.send(());
+        }
+    }
+
+    fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+}
+
+enum CaptureKind {
+    Gui { delay_ms: u64, path: Option<String> },
+    Full { delay_ms: u64, path: Option<String> },
+}
+
+enum DaemonCommand {
+    Gui,
+    Full,
+    Quit,
+}
+
+struct FireshotTray {
+    cmd_tx: mpsc::UnboundedSender<DaemonCommand>,
+}
+
+impl Tray for FireshotTray {
+    fn activate(&mut self, _x: i32, _y: i32) {
+        let _ = self.cmd_tx.send(DaemonCommand::Gui);
+    }
+
+    fn id(&self) -> String {
+        "fireshot".to_string()
+    }
+
+    fn title(&self) -> String {
+        "Fireshot".to_string()
+    }
+
+    fn icon_name(&self) -> String {
+        "camera-photo".to_string()
+    }
+
+    fn menu(&self) -> Vec<MenuItem<Self>> {
+        vec![
+            StandardItem {
+                label: "Capture (GUI)".into(),
+                icon_name: "camera-photo".into(),
+                activate: Box::new(|this: &mut FireshotTray| {
+                    let _ = this.cmd_tx.send(DaemonCommand::Gui);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Full Screen".into(),
+                icon_name: "display".into(),
+                activate: Box::new(|this: &mut FireshotTray| {
+                    let _ = this.cmd_tx.send(DaemonCommand::Full);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Quit".into(),
+                icon_name: "application-exit".into(),
+                activate: Box::new(|this: &mut FireshotTray| {
+                    let _ = this.cmd_tx.send(DaemonCommand::Quit);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+}
+
+fn spawn_capture(kind: CaptureKind) {
+    std::thread::spawn(move || {
+        debug!("spawn_capture: start");
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(err) => {
+                error!("daemon capture: failed to resolve exe: {}", err);
+                return;
+            }
+        };
+
+        let mut cmd = std::process::Command::new(exe);
+        match kind {
+            CaptureKind::Gui { delay_ms, path } => {
+                cmd.arg("gui");
+                if delay_ms > 0 {
+                    cmd.arg("-d").arg(delay_ms.to_string());
+                }
+                if let Some(path) = path {
+                    cmd.arg("-p").arg(path);
+                }
+            }
+            CaptureKind::Full { delay_ms, path } => {
+                cmd.arg("full");
+                if delay_ms > 0 {
+                    cmd.arg("-d").arg(delay_ms.to_string());
+                }
+                if let Some(path) = path {
+                    cmd.arg("-p").arg(path);
+                }
+            }
+        }
+
+        if let Err(err) = cmd.spawn() {
+            error!("daemon capture: failed to spawn child: {}", err);
+        }
+        debug!("spawn_capture: end");
+    });
+}
+
+fn run_daemon(rt: &tokio::runtime::Runtime) -> Result<(), CaptureError> {
+    rt.block_on(async {
+        env_logger::builder().is_test(false).try_init().ok();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let service = FireshotService {
+            shutdown: std::sync::Mutex::new(Some(shutdown_tx)),
+        };
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let tray_service = TrayService::new(FireshotTray { cmd_tx });
+
+        let _conn = zbus::ConnectionBuilder::session()
+            .map_err(|e| CaptureError::Io(e.to_string()))?
+            .name("org.fireshot.Fireshot")
+            .map_err(|e| CaptureError::Io(e.to_string()))?
+            .serve_at("/org/fireshot/Fireshot", service)
+            .map_err(|e| CaptureError::Io(e.to_string()))?
+            .build()
+            .await
+            .map_err(|e| CaptureError::Io(e.to_string()))?;
+
+        tray_service.spawn();
+        println!("fireshot daemon running (org.fireshot.Fireshot)");
+        tokio::pin!(shutdown_rx);
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                Some(cmd) = cmd_rx.recv() => match cmd {
+                    DaemonCommand::Gui => {
+                        spawn_capture(CaptureKind::Gui { delay_ms: 0, path: None });
+                    }
+                    DaemonCommand::Full => {
+                        spawn_capture(CaptureKind::Full { delay_ms: 0, path: None });
+                    }
+                    DaemonCommand::Quit => break,
+                },
+            }
+        }
+        Ok(())
+    })
 }

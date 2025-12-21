@@ -8,6 +8,9 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 zbus = { version = "3", default-features = false, features = ["tokio"] }
+ksni = "0.2"
 fireshot_core = { path = "../core" }
 fireshot_portal = { path = "../portal" }
 fireshot_gui = { path = "../gui" }
+log = "0.4"
+env_logger = "0.11"
