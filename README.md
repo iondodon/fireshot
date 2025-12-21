@@ -1,105 +1,70 @@
 # Fireshot Wayland (Rust)
 
-This is an early rewrite focused on Wayland via xdg-desktop-portal (compositor independent).
+Fireshot is a Wayland-first screenshot tool with an in-place selection overlay,
+editor tools, and a tray/daemon mode. It uses the desktop portal for capture so
+it stays compositor-agnostic.
 
-## Scope
+## Features
 
-- Capture via xdg-desktop-portal Screenshot (interactive selection)
-- Optional save to file
-- Basic editor: pencil, line, rectangle; save-as
+- In-place selection overlay on the active monitor
+- Editor tools: pencil, line, arrow, rectangle, circle, marker, text
+- Effects: pixelate, blur
+- Copy to clipboard, save to file
+- Tray icon + DBus daemon
+
+## Requirements
+
+- Wayland session
+- xdg-desktop-portal + a backend (wlr/gnome/kde)
+- `wl-copy` and `xclip` for clipboard integration
+
+## Install
+
+```bash
+cargo build --release
+```
+
+Binary: `./target/release/fireshot`
 
 ## Usage
 
-```sh
-cargo run -p fireshot -- gui
-cargo run -p fireshot -- gui -d 2000 -p /tmp/capture.png
-cargo run -p fireshot -- full -p /tmp/capture.png
+Capture with GUI:
+
+```bash
+fireshot gui
 ```
 
-## Daemon + DBus
+Capture with GUI and delay:
 
-Run a DBus daemon so other apps/scripts can trigger captures:
-
-```sh
-./target/release/fireshot daemon
+```bash
+fireshot gui -d 2000
 ```
 
-DBus service:
+Fullscreen capture (no editor):
 
-- `org.fireshot.Fireshot`
-- `/org/fireshot/Fireshot`
-
-Methods:
-
-- `gui(delay_ms: u64, path: String)`
-- `full(delay_ms: u64, path: String)`
-- `quit()`
-- `version() -> String`
-
-Tray icon: available in daemon mode (uses StatusNotifierItem).
-
-## Wayland portal setup (required)
-
-This app relies on `xdg-desktop-portal` and a compositor-specific backend.
-If the portal backend is missing or mismatched, capture will fail.
-
-### Recommended for wlroots/niri
-
-Start the wlroots backend and restart the portal:
-
-```sh
-systemctl --user start xdg-desktop-portal-wlr
-systemctl --user restart xdg-desktop-portal
+```bash
+fireshot full -p /tmp/capture.png
 ```
 
-Create `~/.config/xdg-desktop-portal/portals.conf`:
+Fullscreen capture then open editor:
 
-```ini
-[preferred]
-default=wlr;gtk;
-
-[niri]
-default=wlr;gtk;
+```bash
+fireshot full --edit
 ```
 
-Log out/in (or restart the portal again), then test:
+Run tray/daemon:
 
-```sh
-./target/release/fireshot diagnose --ping
+```bash
+fireshot daemon
 ```
 
-### GNOME/KDE
+Diagnostics:
 
-Ensure the correct backend is running:
-
-- GNOME: `xdg-desktop-portal-gnome`
-- KDE: `xdg-desktop-portal-kde`
-
-## Diagnostics
-
-```sh
-./target/release/fireshot diagnose
-./target/release/fireshot diagnose --ping
+```bash
+fireshot diagnose --ping
 ```
 
-## Testing
+## Notes
 
-Scripted smoke test:
-
-```sh
-./scripts/test.sh
-```
-
-Include the interactive portal ping:
-
-```sh
-FIRESHOT_PORTAL_PING=1 ./scripts/test.sh
-```
-
-## TODO (next milestones)
-
-- Clipboard copy
-- Non-interactive full screen capture
-- Editor tools (rect, arrow, text, blur)
-- Config file + tray/daemon
-- DBus interface
+- Portal selection UI is not used; selection happens inside the overlay editor.
+- Clipboard uses `wl-copy`/`xclip` for maximum compatibility.
