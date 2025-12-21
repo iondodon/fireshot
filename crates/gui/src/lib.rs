@@ -11,6 +11,30 @@ enum Tool {
     Rect,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ToolAction {
+    Select,
+    Pencil,
+    Line,
+    Rect,
+    Undo,
+    Copy,
+    Save,
+    Clear,
+}
+
+#[derive(Clone, Copy)]
+enum ToolIcon {
+    Select,
+    Pencil,
+    Line,
+    Rect,
+    Undo,
+    Copy,
+    Save,
+    Clear,
+}
+
 #[derive(Debug, Clone)]
 struct StrokeShape {
     points: Vec<egui::Pos2>,
@@ -74,6 +98,10 @@ struct EditorApp {
     selection: Option<SelectionRect>,
     selection_drag: Option<SelectionDrag>,
     status: Option<String>,
+    last_image_rect: Option<egui::Rect>,
+    last_pixels_per_point: f32,
+    tool_button_rects: Vec<egui::Rect>,
+    tool_controls_rect: Option<egui::Rect>,
 }
 
 impl EditorApp {
@@ -95,6 +123,10 @@ impl EditorApp {
             selection: None,
             selection_drag: None,
             status: None,
+            last_image_rect: None,
+            last_pixels_per_point: 1.0,
+            tool_button_rects: Vec::new(),
+            tool_controls_rect: None,
         }
     }
 
@@ -108,6 +140,10 @@ impl EditorApp {
         let Some(pointer_pos) = pointer.hover_pos() else {
             return;
         };
+        if self.is_over_ui(pointer_pos) {
+            response.ctx.output_mut(|o| o.cursor_icon = egui::CursorIcon::Default);
+            return;
+        }
         if !response.rect.contains(pointer_pos) {
             if pointer.any_released() {
                 if let Some(shape) = self.active_shape.take() {
@@ -308,6 +344,18 @@ impl EditorApp {
         egui::CursorIcon::Crosshair
     }
 
+    fn is_over_ui(&self, pos: egui::Pos2) -> bool {
+        if self.tool_button_rects.iter().any(|rect| rect.contains(pos)) {
+            return true;
+        }
+        if let Some(rect) = self.tool_controls_rect {
+            if rect.contains(pos) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn draw_overlay(&self, response: &egui::Response, painter: &egui::Painter) {
         let scale = response.ctx.pixels_per_point();
         let to_screen = |p: egui::Pos2| {
@@ -369,6 +417,165 @@ impl EditorApp {
         if let Some(active) = &self.active_shape {
             draw_shape(active);
         }
+    }
+
+    fn show_tool_buttons(&mut self, ctx: &egui::Context) {
+        let Some(sel) = self.selection else {
+            return;
+        };
+        let Some(image_rect) = self.last_image_rect else {
+            return;
+        };
+        self.tool_button_rects.clear();
+        let scale = self.last_pixels_per_point;
+        let sel_rect_screen = selection_screen_rect(sel.rect, image_rect, scale);
+
+        let button_size = egui::vec2(28.0, 28.0);
+        let spacing = 6.0;
+        let current_tool = self.tool;
+        let positions = layout_tool_buttons(
+            sel_rect_screen,
+            image_rect,
+            button_size,
+            spacing,
+            8,
+        );
+        let mut index = 0;
+        let mut add_tool =
+            |tooltip: &str, action: ToolAction, icon: ToolIcon, selected: bool| {
+            if index >= positions.len() {
+                return;
+            }
+            let pos = positions[index];
+            index += 1;
+            self.tool_button_rects
+                .push(egui::Rect::from_min_size(pos, button_size));
+            let id = format!("tool_btn_{:?}", action);
+            egui::Area::new(id.into())
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos)
+                .show(ctx, |ui| {
+                    let response = ui.add_sized(button_size, egui::Button::new(""));
+                    let response = response.on_hover_text(tooltip);
+                    let visuals = ui.visuals();
+                    let fg = if selected {
+                        visuals.selection.stroke.color
+                    } else {
+                        visuals.widgets.inactive.fg_stroke.color
+                    };
+                    let painter = ui.painter_at(response.rect);
+                    if selected {
+                        painter.rect_stroke(
+                            response.rect.shrink(1.0),
+                            4.0,
+                            egui::Stroke::new(1.5, visuals.selection.stroke.color),
+                        );
+                    }
+                    paint_tool_icon(&painter, response.rect, icon, fg);
+                    if response.clicked() {
+                        match action {
+                            ToolAction::Select => self.tool = Tool::Select,
+                            ToolAction::Pencil => self.tool = Tool::Pencil,
+                            ToolAction::Line => self.tool = Tool::Line,
+                            ToolAction::Rect => self.tool = Tool::Rect,
+                            ToolAction::Undo => {
+                                self.shapes.pop();
+                            }
+                            ToolAction::Copy => self.copy_and_close(ctx),
+                            ToolAction::Save => self.save_image(),
+                            ToolAction::Clear => self.shapes.clear(),
+                        }
+                    }
+                });
+        };
+
+        add_tool("Select", ToolAction::Select, ToolIcon::Select, current_tool == Tool::Select);
+        add_tool("Pencil", ToolAction::Pencil, ToolIcon::Pencil, current_tool == Tool::Pencil);
+        add_tool("Line", ToolAction::Line, ToolIcon::Line, current_tool == Tool::Line);
+        add_tool("Rect", ToolAction::Rect, ToolIcon::Rect, current_tool == Tool::Rect);
+        add_tool("Undo", ToolAction::Undo, ToolIcon::Undo, false);
+        add_tool("Copy", ToolAction::Copy, ToolIcon::Copy, false);
+        add_tool("Save", ToolAction::Save, ToolIcon::Save, false);
+        add_tool("Clear", ToolAction::Clear, ToolIcon::Clear, false);
+    }
+
+    fn show_tool_controls(&mut self, ctx: &egui::Context) {
+        let Some(sel) = self.selection else {
+            return;
+        };
+        let Some(image_rect) = self.last_image_rect else {
+            return;
+        };
+        self.tool_controls_rect = None;
+        let scale = self.last_pixels_per_point;
+        let sel_rect_screen = selection_screen_rect(sel.rect, image_rect, scale);
+
+        let panel_size = egui::vec2(240.0, 36.0);
+        let spacing = 6.0;
+        let candidates = [
+            egui::pos2(sel_rect_screen.max.x - panel_size.x, sel_rect_screen.max.y + spacing),
+            egui::pos2(sel_rect_screen.min.x, sel_rect_screen.max.y + spacing),
+            egui::pos2(sel_rect_screen.max.x - panel_size.x, sel_rect_screen.min.y - panel_size.y - spacing),
+            egui::pos2(sel_rect_screen.min.x, sel_rect_screen.min.y - panel_size.y - spacing),
+        ];
+        let mut pos = None;
+        for cand in candidates {
+            let mut rect = egui::Rect::from_min_size(cand, panel_size);
+            if rect.min.x < image_rect.min.x {
+                rect = rect.translate(egui::vec2(image_rect.min.x - rect.min.x, 0.0));
+            }
+            if rect.max.x > image_rect.max.x {
+                rect = rect.translate(egui::vec2(image_rect.max.x - rect.max.x, 0.0));
+            }
+            if rect.min.y < image_rect.min.y {
+                rect = rect.translate(egui::vec2(0.0, image_rect.min.y - rect.min.y));
+            }
+            if rect.max.y > image_rect.max.y {
+                rect = rect.translate(egui::vec2(0.0, image_rect.max.y - rect.max.y));
+            }
+            if !rect.intersects(image_rect) {
+                continue;
+            }
+            if self.tool_button_rects.iter().all(|b| !b.intersects(rect)) {
+                pos = Some(rect.min);
+                break;
+            }
+        }
+        let pos = pos.unwrap_or_else(|| {
+            let mut fallback = egui::Rect::from_min_size(
+                egui::pos2(sel_rect_screen.max.x - panel_size.x, sel_rect_screen.max.y + spacing),
+                panel_size,
+            );
+            if fallback.min.x < image_rect.min.x {
+                fallback = fallback.translate(egui::vec2(image_rect.min.x - fallback.min.x, 0.0));
+            }
+            if fallback.max.x > image_rect.max.x {
+                fallback = fallback.translate(egui::vec2(image_rect.max.x - fallback.max.x, 0.0));
+            }
+            if fallback.max.y > image_rect.max.y {
+                fallback = fallback.translate(egui::vec2(0.0, image_rect.max.y - fallback.max.y));
+            }
+            fallback.min
+        });
+        self.tool_controls_rect = Some(egui::Rect::from_min_size(pos, panel_size));
+
+        egui::Area::new("tool_controls".into())
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .rounding(6.0)
+                    .inner_margin(egui::Margin::same(6.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.color_edit_button_srgba(&mut self.color);
+                            ui.add(egui::Slider::new(&mut self.size, 1.0..=20.0).text("Size"));
+                        });
+                        if let Some(status) = &self.status {
+                            ui.label(status);
+                        }
+                    });
+            });
     }
 
     fn render_image(&self) -> RgbaImage {
@@ -477,35 +684,6 @@ impl eframe::App for EditorApp {
             ));
         }
 
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Fireshot");
-                ui.separator();
-                ui.selectable_value(&mut self.tool, Tool::Select, "Select");
-                ui.selectable_value(&mut self.tool, Tool::Pencil, "Pencil");
-                ui.selectable_value(&mut self.tool, Tool::Line, "Line");
-                ui.selectable_value(&mut self.tool, Tool::Rect, "Rect");
-                ui.separator();
-                ui.color_edit_button_srgba(&mut self.color);
-                ui.add(egui::Slider::new(&mut self.size, 1.0..=20.0).text("Size"));
-                if ui.button("Undo").clicked() {
-                    self.shapes.pop();
-                }
-                if ui.button("Clear").clicked() {
-                    self.shapes.clear();
-                }
-                if ui.button("Copy & Close").clicked() {
-                    self.copy_and_close(ctx);
-                }
-                if ui.button("Save As").clicked() {
-                    self.save_image();
-                }
-            });
-            if let Some(status) = &self.status {
-                ui.label(status);
-            }
-        });
-
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
@@ -518,10 +696,15 @@ impl eframe::App for EditorApp {
                             .sense(egui::Sense::click_and_drag()),
                     );
                     let painter = ui.painter();
+                    self.last_image_rect = Some(response.rect);
+                    self.last_pixels_per_point = scale;
                     self.handle_input(&response);
                     self.draw_overlay(&response, painter);
                 }
             });
+
+        self.show_tool_buttons(ctx);
+        self.show_tool_controls(ctx);
 
         let copy_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::C);
         let copy_shortcut_shift =
@@ -755,6 +938,231 @@ fn draw_selection_hud(
         font_id,
         text_color,
     );
+}
+
+fn selection_screen_rect(
+    sel_rect_image: egui::Rect,
+    image_rect: egui::Rect,
+    scale: f32,
+) -> egui::Rect {
+    let min = image_rect.min + egui::vec2(sel_rect_image.min.x / scale, sel_rect_image.min.y / scale);
+    let max = image_rect.min + egui::vec2(sel_rect_image.max.x / scale, sel_rect_image.max.y / scale);
+    egui::Rect::from_min_max(min, max)
+}
+
+fn paint_tool_icon(painter: &egui::Painter, rect: egui::Rect, icon: ToolIcon, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5, color);
+    let pad = rect.width().min(rect.height()) * 0.28;
+    let inner = rect.shrink(pad);
+    match icon {
+        ToolIcon::Select => {
+            painter.rect_stroke(inner, 2.0, stroke);
+            let handle = (rect.width().min(rect.height()) * 0.08).max(1.0);
+            let corners = [
+                inner.min,
+                egui::pos2(inner.max.x, inner.min.y),
+                egui::pos2(inner.min.x, inner.max.y),
+                inner.max,
+            ];
+            for corner in corners {
+                let handle_rect =
+                    egui::Rect::from_center_size(corner, egui::vec2(handle, handle));
+                painter.rect_filled(handle_rect, 1.0, color);
+            }
+        }
+        ToolIcon::Pencil => {
+            let a = egui::pos2(inner.min.x, inner.max.y);
+            let b = egui::pos2(inner.max.x, inner.min.y);
+            painter.line_segment([a, b], stroke);
+            let tip = egui::pos2(b.x - 2.0, b.y + 2.0);
+            painter.line_segment([b, tip], stroke);
+        }
+        ToolIcon::Line => {
+            let a = egui::pos2(inner.min.x, inner.max.y);
+            let b = egui::pos2(inner.max.x, inner.min.y);
+            painter.line_segment([a, b], stroke);
+            painter.circle_filled(a, 2.0, color);
+            painter.circle_filled(b, 2.0, color);
+        }
+        ToolIcon::Rect => {
+            painter.rect_stroke(inner, 2.0, stroke);
+        }
+        ToolIcon::Undo => {
+            let mid = rect.center();
+            let left = egui::pos2(inner.min.x, mid.y);
+            let right = egui::pos2(inner.max.x, mid.y);
+            painter.line_segment([right, left], stroke);
+            painter.line_segment([left, egui::pos2(left.x + 4.0, left.y - 4.0)], stroke);
+            painter.line_segment([left, egui::pos2(left.x + 4.0, left.y + 4.0)], stroke);
+        }
+        ToolIcon::Copy => {
+            let back = inner.translate(egui::vec2(3.0, -3.0));
+            painter.rect_stroke(back, 2.0, stroke);
+            painter.rect_stroke(inner, 2.0, stroke);
+        }
+        ToolIcon::Save => {
+            painter.rect_stroke(inner, 2.0, stroke);
+            let top = egui::Rect::from_min_max(
+                egui::pos2(inner.min.x, inner.min.y),
+                egui::pos2(inner.max.x, inner.min.y + inner.height() * 0.35),
+            );
+            painter.line_segment([top.min, egui::pos2(top.max.x, top.min.y)], stroke);
+            let notch = egui::Rect::from_min_max(
+                egui::pos2(inner.min.x + inner.width() * 0.15, inner.min.y + inner.height() * 0.45),
+                egui::pos2(inner.min.x + inner.width() * 0.45, inner.min.y + inner.height() * 0.8),
+            );
+            painter.rect_stroke(notch, 1.5, stroke);
+        }
+        ToolIcon::Clear => {
+            painter.line_segment([inner.min, inner.max], stroke);
+            painter.line_segment(
+                [egui::pos2(inner.min.x, inner.max.y), egui::pos2(inner.max.x, inner.min.y)],
+                stroke,
+            );
+        }
+    }
+}
+
+fn layout_tool_buttons(
+    selection: egui::Rect,
+    bounds: egui::Rect,
+    button_size: egui::Vec2,
+    spacing: f32,
+    count: usize,
+) -> Vec<egui::Pos2> {
+    let mut positions = Vec::new();
+    let mut remaining = count;
+    let step_x = button_size.x + spacing;
+    let step_y = button_size.y + spacing;
+
+    let max_fit_row = ((bounds.width() + spacing) / step_x).floor().max(0.0) as usize;
+    let max_fit_col = ((bounds.height() + spacing) / step_y).floor().max(0.0) as usize;
+    if max_fit_row == 0 && max_fit_col == 0 {
+        return positions;
+    }
+
+    let row_y = selection.max.y + spacing;
+    if row_y >= bounds.min.y && row_y + button_size.y <= bounds.max.y {
+        let max_by_sel = ((selection.width().max(button_size.x) + spacing) / step_x)
+            .floor()
+            .max(1.0) as usize;
+        let count_here = remaining.min(max_by_sel).min(max_fit_row);
+        if count_here > 0 {
+            let row =
+                row_positions(selection.center().x, row_y, count_here, button_size, spacing, bounds);
+            remaining -= row.len();
+            positions.extend(row);
+        }
+    }
+    if remaining > 0 {
+        let col_x = selection.max.x + spacing;
+        if col_x >= bounds.min.x && col_x + button_size.x <= bounds.max.x {
+            let max_by_sel = ((selection.height().max(button_size.y) + spacing) / step_y)
+                .floor()
+                .max(1.0) as usize;
+            let count_here = remaining.min(max_by_sel).min(max_fit_col);
+            if count_here > 0 {
+                let col = col_positions(
+                    selection.center().y,
+                    col_x,
+                    count_here,
+                    button_size,
+                    spacing,
+                    bounds,
+                );
+                remaining -= col.len();
+                positions.extend(col);
+            }
+        }
+    }
+    if remaining > 0 {
+        let row_y = selection.min.y - spacing - button_size.y;
+        if row_y >= bounds.min.y && row_y + button_size.y <= bounds.max.y {
+            let max_by_sel = ((selection.width().max(button_size.x) + spacing) / step_x)
+                .floor()
+                .max(1.0) as usize;
+            let count_here = remaining.min(max_by_sel).min(max_fit_row);
+            if count_here > 0 {
+                let row = row_positions(
+                    selection.center().x,
+                    row_y,
+                    count_here,
+                    button_size,
+                    spacing,
+                    bounds,
+                );
+                remaining -= row.len();
+                positions.extend(row);
+            }
+        }
+    }
+    if remaining > 0 {
+        let col_x = selection.min.x - spacing - button_size.x;
+        if col_x >= bounds.min.x && col_x + button_size.x <= bounds.max.x {
+            let max_by_sel = ((selection.height().max(button_size.y) + spacing) / step_y)
+                .floor()
+                .max(1.0) as usize;
+            let count_here = remaining.min(max_by_sel).min(max_fit_col);
+            if count_here > 0 {
+                let col = col_positions(
+                    selection.center().y,
+                    col_x,
+                    count_here,
+                    button_size,
+                    spacing,
+                    bounds,
+                );
+                remaining -= col.len();
+                positions.extend(col);
+            }
+        }
+    }
+
+    if remaining > 0 && positions.is_empty() {
+        let y = (selection.max.y - button_size.y).clamp(bounds.min.y, bounds.max.y - button_size.y);
+        let row = row_positions(selection.center().x, y, remaining.min(max_fit_row.max(1)), button_size, spacing, bounds);
+        positions.extend(row);
+    }
+
+    positions
+}
+
+fn row_positions(
+    center_x: f32,
+    y: f32,
+    count: usize,
+    button_size: egui::Vec2,
+    spacing: f32,
+    bounds: egui::Rect,
+) -> Vec<egui::Pos2> {
+    let total_width = count as f32 * button_size.x + (count.saturating_sub(1) as f32) * spacing;
+    let mut start_x = center_x - total_width / 2.0;
+    let max_start = bounds.max.x - total_width;
+    if max_start.is_finite() {
+        start_x = start_x.clamp(bounds.min.x, max_start);
+    }
+    (0..count)
+        .map(|i| egui::pos2(start_x + i as f32 * (button_size.x + spacing), y))
+        .collect()
+}
+
+fn col_positions(
+    center_y: f32,
+    x: f32,
+    count: usize,
+    button_size: egui::Vec2,
+    spacing: f32,
+    bounds: egui::Rect,
+) -> Vec<egui::Pos2> {
+    let total_height = count as f32 * button_size.y + (count.saturating_sub(1) as f32) * spacing;
+    let mut start_y = center_y - total_height / 2.0;
+    let max_start = bounds.max.y - total_height;
+    if max_start.is_finite() {
+        start_y = start_y.clamp(bounds.min.y, max_start);
+    }
+    (0..count)
+        .map(|i| egui::pos2(x, start_y + i as f32 * (button_size.y + spacing)))
+        .collect()
 }
 
 fn crop_image(img: &RgbaImage, rect: egui::Rect) -> RgbaImage {
