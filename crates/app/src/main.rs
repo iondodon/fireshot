@@ -80,7 +80,7 @@ fn main() -> Result<(), CaptureError> {
                 std::thread::sleep(std::time::Duration::from_millis(req.delay_ms));
             }
 
-            let captured = run_async(&rt, fireshot_portal::capture_interactive())?;
+            let captured = run_async(&rt, fireshot_portal::capture_fullscreen())?;
             let save_path = path.unwrap_or_else(|| "screenshot.png".to_string());
             captured
                 .image
