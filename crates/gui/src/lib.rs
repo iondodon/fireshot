@@ -124,6 +124,8 @@ impl EditorApp {
         );
 
         if self.tool == Tool::Select {
+            let icon = self.cursor_icon_for_selection(&pointer, img_pos, scale);
+            response.ctx.output_mut(|o| o.cursor_icon = icon);
             self.handle_selection_input(&pointer, img_pos, scale);
             return;
         }
@@ -262,6 +264,50 @@ impl EditorApp {
         }
     }
 
+    fn cursor_icon_for_selection(
+        &self,
+        pointer: &egui::PointerState,
+        img_pos: egui::Pos2,
+        scale: f32,
+    ) -> egui::CursorIcon {
+        if let Some(drag) = self.selection_drag {
+            return match drag {
+                SelectionDrag::Moving { .. } => egui::CursorIcon::Grabbing,
+                SelectionDrag::Resizing { corner } => match corner {
+                    SelectionCorner::TopLeft | SelectionCorner::BottomRight => {
+                        egui::CursorIcon::ResizeNwSe
+                    }
+                    SelectionCorner::TopRight | SelectionCorner::BottomLeft => {
+                        egui::CursorIcon::ResizeNeSw
+                    }
+                },
+                SelectionDrag::Creating { .. } => egui::CursorIcon::Crosshair,
+            };
+        }
+
+        let handle_radius = 6.0 * scale;
+        if let Some(sel) = self.selection {
+            if let Some(corner) = hit_corner(sel.rect, img_pos, handle_radius) {
+                return match corner {
+                    SelectionCorner::TopLeft | SelectionCorner::BottomRight => {
+                        egui::CursorIcon::ResizeNwSe
+                    }
+                    SelectionCorner::TopRight | SelectionCorner::BottomLeft => {
+                        egui::CursorIcon::ResizeNeSw
+                    }
+                };
+            }
+            if sel.rect.contains(img_pos) {
+                return if pointer.primary_down() {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    egui::CursorIcon::Grab
+                };
+            }
+        }
+        egui::CursorIcon::Crosshair
+    }
+
     fn draw_overlay(&self, response: &egui::Response, painter: &egui::Painter) {
         let scale = response.ctx.pixels_per_point();
         let to_screen = |p: egui::Pos2| {
@@ -291,6 +337,7 @@ impl EditorApp {
 
             painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
             draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
+            draw_selection_hud(painter, sel_rect, sel.rect, response.rect);
         }
         let draw_shape = |shape: &Shape| match shape {
             Shape::Stroke(stroke) => {
@@ -658,6 +705,56 @@ fn draw_handles(painter: &egui::Painter, rect: egui::Rect, radius: f32, color: e
     for corner in corners {
         painter.circle_filled(corner, radius, color);
     }
+}
+
+fn draw_selection_hud(
+    painter: &egui::Painter,
+    sel_rect_screen: egui::Rect,
+    sel_rect_image: egui::Rect,
+    image_rect: egui::Rect,
+) {
+    let width = sel_rect_image.width().round().max(0.0) as i32;
+    let height = sel_rect_image.height().round().max(0.0) as i32;
+    let x = sel_rect_image.min.x.round() as i32;
+    let y = sel_rect_image.min.y.round() as i32;
+    let label = format!("{}x{}  {},{}", width, height, x, y);
+
+    let font_id = egui::FontId::proportional(12.0);
+    let text_color = egui::Color32::WHITE;
+    let padding = egui::vec2(6.0, 3.0);
+    let text_size = painter
+        .layout_no_wrap(label.clone(), font_id.clone(), text_color)
+        .size();
+    let mut hud_rect = egui::Rect::from_min_size(
+        sel_rect_screen.min + egui::vec2(6.0, 6.0),
+        text_size + padding * 2.0,
+    );
+
+    if hud_rect.max.x > image_rect.max.x {
+        hud_rect = hud_rect.translate(egui::vec2(image_rect.max.x - hud_rect.max.x, 0.0));
+    }
+    if hud_rect.max.y > image_rect.max.y {
+        hud_rect = hud_rect.translate(egui::vec2(0.0, image_rect.max.y - hud_rect.max.y));
+    }
+    if hud_rect.min.x < image_rect.min.x {
+        hud_rect = hud_rect.translate(egui::vec2(image_rect.min.x - hud_rect.min.x, 0.0));
+    }
+    if hud_rect.min.y < image_rect.min.y {
+        hud_rect = hud_rect.translate(egui::vec2(0.0, image_rect.min.y - hud_rect.min.y));
+    }
+
+    painter.rect_filled(
+        hud_rect,
+        3.0,
+        egui::Color32::from_rgba_premultiplied(0, 0, 0, 190),
+    );
+    painter.text(
+        hud_rect.min + padding,
+        egui::Align2::LEFT_TOP,
+        label,
+        font_id,
+        text_color,
+    );
 }
 
 fn crop_image(img: &RgbaImage, rect: egui::Rect) -> RgbaImage {
