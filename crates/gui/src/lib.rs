@@ -843,8 +843,9 @@ impl EditorApp {
             Shape::Arrow(arrow) => {
                 let start = to_screen(arrow.start);
                 let end = to_screen(arrow.end);
+                let (base, _, _) = arrow_head_points(start, end, arrow.size);
                 painter.add(egui::Shape::line_segment(
-                    [start, end],
+                    [start, base],
                     egui::Stroke::new(arrow.size, arrow.color),
                 ));
                 draw_arrow_head(painter, start, end, arrow.size, arrow.color);
@@ -916,7 +917,8 @@ impl EditorApp {
                     draw_line(&mut img, line.start, line.end, line.color, line.size);
                 }
                 Shape::Arrow(arrow) => {
-                    draw_line(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
+                    let (base, _, _) = arrow_head_points(arrow.start, arrow.end, arrow.size);
+                    draw_line(&mut img, arrow.start, base, arrow.color, arrow.size);
                     draw_arrow_head_image(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
                 }
                 Shape::Rect(rect) => {
@@ -1021,7 +1023,8 @@ impl EditorApp {
                     draw_line(&mut img, line.start, line.end, line.color, line.size);
                 }
                 Shape::Arrow(arrow) => {
-                    draw_line(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
+                    let (base, _, _) = arrow_head_points(arrow.start, arrow.end, arrow.size);
+                    draw_line(&mut img, arrow.start, base, arrow.color, arrow.size);
                     draw_arrow_head_image(&mut img, arrow.start, arrow.end, arrow.color, arrow.size);
                 }
                 Shape::Rect(rect) => {
@@ -1270,16 +1273,8 @@ fn draw_arrow_head(
     size: f32,
     color: egui::Color32,
 ) {
-    let dir = end - start;
-    let len = dir.length().max(1.0);
-    let dir = dir / len;
-    let perp = egui::vec2(-dir.y, dir.x);
-    let head_len = 10.0 + size * 1.5;
-    let head_w = 6.0 + size * 1.2;
+    let (_base, left, right) = arrow_head_points(start, end, size);
     let tip = end;
-    let base = end - dir * head_len;
-    let left = base + perp * head_w * 0.5;
-    let right = base - perp * head_w * 0.5;
     painter.add(egui::Shape::convex_polygon(
         vec![tip, left, right],
         color,
@@ -1294,17 +1289,26 @@ fn draw_arrow_head_image(
     color: egui::Color32,
     size: f32,
 ) {
+    let (_base, left, right) = arrow_head_points(start, end, size);
+    let tip = end;
+    fill_triangle(img, tip, left, right, color32_to_rgba(color));
+}
+
+fn arrow_head_points(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    size: f32,
+) -> (egui::Pos2, egui::Pos2, egui::Pos2) {
     let dir = end - start;
     let len = dir.length().max(1.0);
     let dir = dir / len;
     let perp = egui::vec2(-dir.y, dir.x);
-    let head_len = 10.0 + size * 1.5;
-    let head_w = 6.0 + size * 1.2;
-    let tip = end;
+    let head_len = (size * 4.0).max(10.0).min(len * 0.8);
+    let head_w = (size * 3.0).max(6.0).min(len * 0.6);
     let base = end - dir * head_len;
     let left = base + perp * head_w * 0.5;
     let right = base - perp * head_w * 0.5;
-    fill_triangle(img, tip, left, right, color32_to_rgba(color));
+    (base, left, right)
 }
 
 fn draw_ellipse(img: &mut RgbaImage, start: egui::Pos2, end: egui::Pos2, color: egui::Color32, size: f32) {
@@ -1345,7 +1349,9 @@ fn fill_triangle(img: &mut RgbaImage, a: egui::Pos2, b: egui::Pos2, c: egui::Pos
             let w0 = edge_function(b, c, p);
             let w1 = edge_function(c, a, p);
             let w2 = edge_function(a, b, p);
-            if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+            let has_pos = w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0;
+            let has_neg = w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0;
+            if has_pos || has_neg {
                 img.put_pixel(x as u32, y as u32, color);
             }
         }
