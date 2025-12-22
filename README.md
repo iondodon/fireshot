@@ -4,6 +4,10 @@ Fireshot is a Wayland-first screenshot tool with an in-place selection overlay,
 editor tools, and a tray/daemon mode. It uses the desktop portal for capture so
 it stays compositor-agnostic.
 
+<p align="center">
+  <img src="screenshot.png" alt="Fireshot screenshot" width="900">
+</p>
+
 ## Requirements
 
 - Wayland session
