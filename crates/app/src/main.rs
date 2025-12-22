@@ -45,11 +45,7 @@ enum Command {
     /// Run DBus daemon to handle capture requests.
     Daemon,
     /// Print portal and environment diagnostics.
-    Diagnose {
-        /// Attempt a Screenshot portal call (will prompt).
-        #[arg(long)]
-        ping: bool,
-    },
+    Diagnose,
 }
 
 fn main() -> Result<(), CaptureError> {
@@ -66,8 +62,8 @@ fn main() -> Result<(), CaptureError> {
     };
 
     match command {
-        Command::Diagnose { ping } => {
-            diagnose(&rt, ping);
+        Command::Diagnose => {
+            diagnose(&rt);
         }
         Command::Gui { delay, path } => {
             let req = CaptureRequest {
@@ -125,7 +121,7 @@ fn main() -> Result<(), CaptureError> {
     Ok(())
 }
 
-fn diagnose(rt: &tokio::runtime::Runtime, ping: bool) {
+fn diagnose(rt: &tokio::runtime::Runtime) {
     println!("Fireshot Wayland diagnostics");
     println!("env:");
     for key in [
@@ -171,15 +167,6 @@ fn diagnose(rt: &tokio::runtime::Runtime, ping: bool) {
         println!("  {} not found", portals_dir.display());
     }
 
-    if ping {
-        println!();
-        println!("portal ping:");
-        let ping_result = run_async(rt, fireshot_portal::probe_screenshot());
-        match ping_result {
-            Ok(uri) => println!("  screenshot ok: {}", uri),
-            Err(err) => println!("  screenshot error: {}", err),
-        }
-    }
 }
 
 fn run_async<T>(

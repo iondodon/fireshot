@@ -24,7 +24,7 @@ Each desktop has it's preffered portal backend:
 - `GNOME` - `xdg-desktop-portal-gnome`
 - `KDE` - `xdg-desktop-portal-kde`
 
-See the XDG_CURRENT_DESKTOP and the available portal backends that are installed on your machine - `fireshot diagnose`.
+See the XDG_CURRENT_DESKTOP and the available portal backends that are installed on your machine with `fireshot diagnose`.
 If portal service is `false` meaning that it is not running, start it with `systemctl --user restart xdg-desktop-portal` and then restart the backend with one of the following, depending on the desktop type:
 
 - `systemctl --user restart xdg-desktop-portal-wlr`
