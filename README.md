@@ -35,7 +35,7 @@ If portal service is `false` meaning that it is not running, start it with `syst
 ## ❗ Important for `niri`
 
 `niri` does not have it's own portal backend. But it can work well with the backends of other desktops, for example `xdg-desktop-portal-wlr` or `xdg-desktop-portal-gnome`.
-Most probably `fireshot` will fail to work on niri because niri defaults to `xdg-desktop-portal-gtk`, but this backend does not offer screenshot support so it is needed to tell `niri` to use a different backend for taking screenshots. For this, it is needed to create a file `~/.config/xdg-desktop-portal/niri-portals.conf` with the following content:
+Most probably `fireshot` will fail to work on niri because niri defaults to `xdg-desktop-portal-gtk`, but this backend does not offer screenshot support so it is needed to tell `xdg-desktop-portal` to use a different backend (`xdg-desktop-portal-wlr` or `xdg-desktop-portal-gnome`) for taking screenshots. For this, it is needed to create a file `~/.config/xdg-desktop-portal/niri-portals.conf` with the following content:
 
 ```
 [preferred]
@@ -58,4 +58,4 @@ Binary: `fireshot` (in your cargo bin path)
 
 ## Usage
 
-Run `fireshot --gelp` to see usage examples.
+Run `fireshot --help` to see usage examples.
