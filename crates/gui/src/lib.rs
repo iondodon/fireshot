@@ -146,6 +146,7 @@ struct EditorApp {
     size: f32,
     shapes: Vec<Shape>,
     active_shape: Option<Shape>,
+    redo_stack: Vec<Shape>,
     selection: Option<SelectionRect>,
     selection_drag: Option<SelectionDrag>,
     status: Option<String>,
@@ -188,6 +189,7 @@ impl EditorApp {
             size: 3.0,
             shapes: Vec::new(),
             active_shape: None,
+            redo_stack: Vec::new(),
             selection: None,
             selection_drag: None,
             status: None,
@@ -887,10 +889,12 @@ impl EditorApp {
         self.shapes.push(shape);
         self.shapes_version = self.shapes_version.wrapping_add(1);
         self.effect_previews.clear();
+        self.redo_stack.clear();
     }
 
     fn pop_shape(&mut self) {
-        if self.shapes.pop().is_some() {
+        if let Some(shape) = self.shapes.pop() {
+            self.redo_stack.push(shape);
             self.shapes_version = self.shapes_version.wrapping_add(1);
             self.effect_previews.clear();
         }
@@ -899,6 +903,15 @@ impl EditorApp {
     fn clear_shapes(&mut self) {
         if !self.shapes.is_empty() {
             self.shapes.clear();
+            self.shapes_version = self.shapes_version.wrapping_add(1);
+            self.effect_previews.clear();
+            self.redo_stack.clear();
+        }
+    }
+
+    fn redo_shape(&mut self) {
+        if let Some(shape) = self.redo_stack.pop() {
+            self.shapes.push(shape);
             self.shapes_version = self.shapes_version.wrapping_add(1);
             self.effect_previews.clear();
         }
@@ -1186,8 +1199,18 @@ impl eframe::App for EditorApp {
         }
 
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
-        let undo_requested = ctx.input_mut(|i| i.consume_shortcut(&undo_shortcut));
-        if undo_requested {
+        let redo_shortcut = egui::KeyboardShortcut::new(
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            egui::Key::Z,
+        );
+        let (undo_requested, redo_requested) = ctx.input_mut(|i| {
+            let redo = i.consume_shortcut(&redo_shortcut);
+            let undo = i.consume_shortcut(&undo_shortcut);
+            (undo, redo)
+        });
+        if redo_requested {
+            self.redo_shape();
+        } else if undo_requested {
             self.pop_shape();
         }
 
