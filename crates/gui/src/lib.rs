@@ -12,6 +12,7 @@ enum Tool {
     Rect,
     Circle,
     Marker,
+    MarkerLine,
     Text,
     Pixelate,
     Blur,
@@ -35,6 +36,7 @@ enum ToolIcon {
     Rect,
     Circle,
     Marker,
+    MarkerLine,
     Text,
     Pixelate,
     Blur,
@@ -259,6 +261,12 @@ impl EditorApp {
                 }),
                 Tool::Marker => Shape::Stroke(StrokeShape {
                     points: vec![img_pos],
+                    color: with_alpha(self.color, 120),
+                    size: self.size.max(6.0),
+                }),
+                Tool::MarkerLine => Shape::Line(LineShape {
+                    start: img_pos,
+                    end: img_pos,
                     color: with_alpha(self.color, 120),
                     size: self.size.max(6.0),
                 }),
@@ -578,7 +586,7 @@ impl EditorApp {
         }
 
         let mut color = self.color;
-        if matches!(self.tool, Tool::Marker) {
+        if matches!(self.tool, Tool::Marker | Tool::MarkerLine) {
             color = with_alpha(self.color, 120);
         }
         if matches!(self.tool, Tool::Pixelate | Tool::Blur) {
@@ -610,6 +618,12 @@ impl EditorApp {
             ("Rect", ToolAction::Tool(Tool::Rect), ToolIcon::Rect, current_tool == Tool::Rect),
             ("Circle", ToolAction::Tool(Tool::Circle), ToolIcon::Circle, current_tool == Tool::Circle),
             ("Marker", ToolAction::Tool(Tool::Marker), ToolIcon::Marker, current_tool == Tool::Marker),
+            (
+                "Marker Line",
+                ToolAction::Tool(Tool::MarkerLine),
+                ToolIcon::MarkerLine,
+                current_tool == Tool::MarkerLine,
+            ),
             ("Text", ToolAction::Tool(Tool::Text), ToolIcon::Text, current_tool == Tool::Text),
             ("Pixelate", ToolAction::Tool(Tool::Pixelate), ToolIcon::Pixelate, current_tool == Tool::Pixelate),
             ("Blur", ToolAction::Tool(Tool::Blur), ToolIcon::Blur, current_tool == Tool::Blur),
@@ -1839,6 +1853,13 @@ fn paint_tool_icon(painter: &egui::Painter, rect: egui::Rect, icon: ToolIcon, co
             let a = egui::pos2(inner.min.x, inner.max.y - 2.0);
             let b = egui::pos2(inner.max.x, inner.min.y + 2.0);
             painter.line_segment([a, b], egui::Stroke::new(3.5, color));
+        }
+        ToolIcon::MarkerLine => {
+            let a = egui::pos2(inner.min.x, inner.max.y - 2.0);
+            let b = egui::pos2(inner.max.x, inner.min.y + 2.0);
+            painter.line_segment([a, b], egui::Stroke::new(3.5, color));
+            painter.circle_filled(a, 2.0, color);
+            painter.circle_filled(b, 2.0, color);
         }
         ToolIcon::Text => {
             painter.text(
