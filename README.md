@@ -4,79 +4,49 @@ Fireshot is a Wayland-first screenshot tool with an in-place selection overlay,
 editor tools, and a tray/daemon mode. It uses the desktop portal for capture so
 it stays compositor-agnostic.
 
-## Features
-
-- In-place selection overlay on the active monitor
-- Editor tools: pencil, line, arrow, rectangle, circle, marker, text
-- Effects: pixelate, blur
-- Copy to clipboard, save to file
-- Tray icon + DBus daemon
-
 ## Requirements
 
 - Wayland session
-- xdg-desktop-portal + a backend (wlr/gnome/kde)
+- xdg-desktop-portal + a backend (wlr/gnome/kde) depending on the type of the desktop
 - `wl-copy` and `xclip` for clipboard integration
 
-## First Run Checklist (Portals)
+## ❗ Important
 
-Fireshot uses xdg-desktop-portal for screenshots. If capture fails, check:
+Make sure you have installed `wl-copy` and `xclip`
 
-1. Portal service is running:
+## Make sure the portal is properly configured
 
-   ```bash
-   systemctl --user status xdg-desktop-portal
-   ```
+Fireshot uses `xdg-desktop-portal` for screenshots.
 
-2. A portal backend is installed (wlr/gnome/kde):
+Each desktop has it's preffered portal backend:
 
-   ```bash
-   ls /usr/share/xdg-desktop-portal/portals
-   ```
+- `hyprland`, `niri`, `sway`, `wlroots` - `xdg-desktop-portal-wlr`
+- `GNOME` - `xdg-desktop-portal-gnome`
+- `KDE` - `xdg-desktop-portal-kde`
 
-3. Install a portal backend (examples):
+See the XDG_CURRENT_DESKTOP and the available portal backends that are installed on your machine - `fireshot diagnose`.
+If portal service is `false` meaning that it is not running, start it with `systemctl --user restart xdg-desktop-portal` and then restart the backend with one of the following, depending on the desktop type:
 
-   ```bash
-   # Arch
-   sudo pacman -S xdg-desktop-portal-wlr
-   sudo pacman -S xdg-desktop-portal-gnome
-   sudo pacman -S xdg-desktop-portal-kde
+- `systemctl --user restart xdg-desktop-portal-wlr`
+- `systemctl --user restart xdg-desktop-portal-gnome`
+- `systemctl --user restart xdg-desktop-portal-kde`
+- `systemctl --user restart xdg-desktop-portal-gtk`
 
-   # Debian/Ubuntu
-   sudo apt install xdg-desktop-portal-wlr
-   sudo apt install xdg-desktop-portal-gnome
-   sudo apt install xdg-desktop-portal-kde
+## ❗ Important for `niri`
 
-   # Fedora
-   sudo dnf install xdg-desktop-portal-wlr
-   sudo dnf install xdg-desktop-portal-gnome
-   sudo dnf install xdg-desktop-portal-kde
-   ```
+`niri` does not have it's own portal backend. But it can work well with the backends of other desktops, for example `xdg-desktop-portal-wlr` or `xdg-desktop-portal-gnome`.
+Most probably `fireshot` will fail to work on niri because niri defaults to `xdg-desktop-portal-gtk`, but this backend does not offer screenshot support so it is needed to tell `niri` to use a different backend for taking screenshots. For this, it is needed to create a file `~/.config/xdg-desktop-portal/niri-portals.conf` with the following content:
 
-   Pick the backend that matches your compositor/desktop:
-   - wlroots/niri/sway/hyprland → `xdg-desktop-portal-wlr`
-   - GNOME → `xdg-desktop-portal-gnome`
-   - KDE → `xdg-desktop-portal-kde`
+```
+[preferred]
+default=wlr;gnome;gtk;
 
-4. Required: Override backend selection with `portals.conf` in `~/.config/xdg-desktop-portal/portals.conf`:
+org.freedesktop.impl.portal.Screenshot=wlr;gnome;gtk;
+```
 
-   ```ini
-   # ~/.config/xdg-desktop-portal/portals.conf
-   [preferred]
-   default=wlr;gtk;
+if the file is already present, just add `org.freedesktop.impl.portal.Screenshot=wlr;gnome;gtk` to it.
 
-   [niri]
-   default=wlr;gtk;
-   ```
-
-Note: On some desktops (including niri), the portal auto-selection can pick
-the wrong backend. The `portals.conf` override is required to ensure wlr is used.
-
-5. Run built-in diagnostics:
-
-   ```bash
-   fireshot diagnose --ping
-   ```
+**Then restart the desktop session**.
 
 ## Install
 
@@ -88,49 +58,4 @@ Binary: `fireshot` (in your cargo bin path)
 
 ## Usage
 
-Capture with GUI:
-
-```bash
-fireshot gui
-```
-
-Capture with GUI and delay:
-
-```bash
-fireshot gui -d 2000
-```
-
-Fullscreen capture (no editor):
-
-```bash
-fireshot full -p /tmp/capture.png
-```
-
-Fullscreen capture then open editor:
-
-```bash
-fireshot full --edit
-```
-
-Run tray/daemon:
-
-```bash
-fireshot daemon
-```
-
-Diagnostics:
-
-```bash
-fireshot diagnose
-```
-
-Portal ping:
-
-```bash
-fireshot diagnose --ping
-```
-
-## Notes
-
-- Portal selection UI is not used; selection happens inside the overlay editor.
-- Clipboard uses `wl-copy`/`xclip` for maximum compatibility.
+Run `fireshot --gelp` to see usage examples.
