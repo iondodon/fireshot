@@ -1,5 +1,7 @@
 use fireshot_core::CaptureError;
 use image::DynamicImage;
+use std::path::PathBuf;
+use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
 
 pub struct CapturedImage {
     pub image: DynamicImage,
@@ -65,4 +67,36 @@ pub async fn probe_screenshot() -> Result<String, CaptureError> {
         .map_err(|e| CaptureError::Portal(e.to_string()))?;
 
     Ok(response.uri().to_string())
+}
+
+pub async fn save_file_dialog(default_name: &str) -> Result<Option<PathBuf>, CaptureError> {
+    let response = SelectedFiles::save_file()
+        .title("Save screenshot")
+        .accept_label("Save")
+        .current_name(default_name)
+        .filter(
+            FileFilter::new("PNG Image")
+                .mimetype("image/png")
+                .glob("*.png"),
+        )
+        .filter(
+            FileFilter::new("JPEG Image")
+                .mimetype("image/jpeg")
+                .glob("*.jpg")
+                .glob("*.jpeg"),
+        )
+        .send()
+        .await
+        .map_err(|e| CaptureError::Portal(e.to_string()))?
+        .response()
+        .map_err(|e| CaptureError::Portal(e.to_string()))?;
+
+    let Some(uri) = response.uris().first() else {
+        return Ok(None);
+    };
+
+    let path = uri
+        .to_file_path()
+        .map_err(|_| CaptureError::Portal("invalid portal file uri".to_string()))?;
+    Ok(Some(path))
 }

@@ -106,7 +106,11 @@ fn main() -> Result<(), CaptureError> {
             if edit {
                 fireshot_gui::run_viewer(captured.image)?;
             } else if path.is_none() {
-                let save_path = "screenshot.png".to_string();
+                let default_name = "screenshot.png";
+                let save_path = run_async(&rt, fireshot_portal::save_file_dialog(default_name))?;
+                let Some(save_path) = save_path else {
+                    return Ok(());
+                };
                 captured
                     .image
                     .save(&save_path)
@@ -215,7 +219,7 @@ enum CaptureKind {
 
 enum DaemonCommand {
     Gui,
-    FullEdit,
+    FullSave,
     Quit,
 }
 
@@ -255,7 +259,7 @@ impl Tray for FireshotTray {
                 label: "Full Screen".into(),
                 icon_name: "display".into(),
                 activate: Box::new(|this: &mut FireshotTray| {
-                    let _ = this.cmd_tx.send(DaemonCommand::FullEdit);
+                    let _ = this.cmd_tx.send(DaemonCommand::FullSave);
                 }),
                 ..Default::default()
             }
@@ -346,8 +350,8 @@ fn run_daemon(rt: &tokio::runtime::Runtime) -> Result<(), CaptureError> {
                     DaemonCommand::Gui => {
                         spawn_capture(CaptureKind::Gui { delay_ms: 0, path: None });
                     }
-                    DaemonCommand::FullEdit => {
-                        spawn_capture(CaptureKind::Full { delay_ms: 0, path: None, edit: true });
+                    DaemonCommand::FullSave => {
+                        spawn_capture(CaptureKind::Full { delay_ms: 0, path: None, edit: false });
                     }
                     DaemonCommand::Quit => break,
                 },
