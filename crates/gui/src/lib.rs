@@ -13,6 +13,7 @@ enum Tool {
     Circle,
     Marker,
     MarkerLine,
+    CircleCount,
     Text,
     Pixelate,
     Blur,
@@ -37,6 +38,7 @@ enum ToolIcon {
     Circle,
     Marker,
     MarkerLine,
+    CircleCount,
     Text,
     Pixelate,
     Blur,
@@ -86,6 +88,15 @@ struct ArrowShape {
 }
 
 #[derive(Debug, Clone)]
+struct CircleCountShape {
+    center: egui::Pos2,
+    pointer: egui::Pos2,
+    color: egui::Color32,
+    size: f32,
+    count: u32,
+}
+
+#[derive(Debug, Clone)]
 struct TextShape {
     pos: egui::Pos2,
     text: String,
@@ -114,6 +125,7 @@ enum Shape {
     Arrow(ArrowShape),
     Rect(RectShape),
     Circle(CircleShape),
+    CircleCount(CircleCountShape),
     Text(TextShape),
     Effect(EffectShape),
 }
@@ -270,6 +282,13 @@ impl EditorApp {
                     color: with_alpha(self.color, 120),
                     size: self.size.max(6.0),
                 }),
+                Tool::CircleCount => Shape::CircleCount(CircleCountShape {
+                    center: img_pos,
+                    pointer: img_pos,
+                    color: self.color,
+                    size: self.size,
+                    count: self.next_circle_count(),
+                }),
                 Tool::Line => Shape::Line(LineShape {
                     start: img_pos,
                     end: img_pos,
@@ -331,6 +350,9 @@ impl EditorApp {
                     }
                     Shape::Circle(circle) => {
                         circle.end = img_pos;
+                    }
+                    Shape::CircleCount(counter) => {
+                        counter.pointer = img_pos;
                     }
                     Shape::Effect(effect) => {
                         effect.end = img_pos;
@@ -540,6 +562,7 @@ impl EditorApp {
                 shape,
                 painter,
                 &to_screen,
+                scale,
                 base_preview.as_ref(),
                 &mut effect_index,
                 &response.ctx,
@@ -550,6 +573,7 @@ impl EditorApp {
                 &active,
                 painter,
                 &to_screen,
+                scale,
                 base_preview.as_ref(),
                 &mut effect_index,
                 &response.ctx,
@@ -582,6 +606,21 @@ impl EditorApp {
                 return;
             }
         } else {
+            return;
+        }
+
+        if matches!(self.tool, Tool::CircleCount) {
+            let (contrast, anti) = circlecount_contrast_colors(self.color);
+            let bubble_size = circlecount_bubble_size(self.size);
+            let outer_radius = (bubble_size + CIRCLECOUNT_PADDING) / scale;
+            let inner_radius = bubble_size / scale;
+            painter.circle_filled(pointer_pos, outer_radius, anti);
+            painter.circle_stroke(
+                pointer_pos,
+                outer_radius,
+                egui::Stroke::new(1.0, contrast),
+            );
+            painter.circle_filled(pointer_pos, inner_radius, self.color);
             return;
         }
 
@@ -623,6 +662,12 @@ impl EditorApp {
                 ToolAction::Tool(Tool::MarkerLine),
                 ToolIcon::MarkerLine,
                 current_tool == Tool::MarkerLine,
+            ),
+            (
+                "Circle Count",
+                ToolAction::Tool(Tool::CircleCount),
+                ToolIcon::CircleCount,
+                current_tool == Tool::CircleCount,
             ),
             ("Text", ToolAction::Tool(Tool::Text), ToolIcon::Text, current_tool == Tool::Text),
             ("Pixelate", ToolAction::Tool(Tool::Pixelate), ToolIcon::Pixelate, current_tool == Tool::Pixelate),
@@ -820,6 +865,7 @@ impl EditorApp {
         shape: &Shape,
         painter: &egui::Painter,
         to_screen: &F,
+        scale: f32,
         base_preview: Option<&RgbaImage>,
         effect_index: &mut usize,
         ctx: &egui::Context,
@@ -855,6 +901,9 @@ impl EditorApp {
                     points,
                     egui::Stroke::new(circle.size, circle.color),
                 ));
+            }
+            Shape::CircleCount(counter) => {
+                draw_circle_count_preview(painter, to_screen, counter, scale);
             }
             Shape::Arrow(arrow) => {
                 let start = to_screen(arrow.start);
@@ -931,6 +980,16 @@ impl EditorApp {
         }
     }
 
+    fn next_circle_count(&self) -> u32 {
+        let mut max_count = 0;
+        for shape in &self.shapes {
+            if let Shape::CircleCount(counter) = shape {
+                max_count = max_count.max(counter.count);
+            }
+        }
+        max_count + 1
+    }
+
     fn render_full_image_without_effects(&self) -> RgbaImage {
         let mut img = self.base_image.clone();
         for shape in &self.shapes {
@@ -962,6 +1021,9 @@ impl EditorApp {
                 }
                 Shape::Circle(circle) => {
                     draw_ellipse(&mut img, circle.start, circle.end, circle.color, circle.size);
+                }
+                Shape::CircleCount(counter) => {
+                    draw_circle_count_image(&mut img, counter);
                 }
                 Shape::Text(text) => {
                     let scale = (text.size / 6.0).round().max(1.0) as u32;
@@ -1068,6 +1130,9 @@ impl EditorApp {
                 }
                 Shape::Circle(circle) => {
                     draw_ellipse(&mut img, circle.start, circle.end, circle.color, circle.size);
+                }
+                Shape::CircleCount(counter) => {
+                    draw_circle_count_image(&mut img, counter);
                 }
                 Shape::Text(text) => {
                     let scale = (text.size / 6.0).round().max(1.0) as u32;
@@ -1357,6 +1422,28 @@ fn arrow_head_points(
     (base, left, right)
 }
 
+const CIRCLECOUNT_PADDING: f32 = 2.0;
+const CIRCLECOUNT_THICKNESS_OFFSET: f32 = 15.0;
+
+fn circlecount_bubble_size(size: f32) -> f32 {
+    size + CIRCLECOUNT_THICKNESS_OFFSET
+}
+
+fn circlecount_contrast_colors(color: egui::Color32) -> (egui::Color32, egui::Color32) {
+    if color_is_dark(color) {
+        (egui::Color32::WHITE, egui::Color32::BLACK)
+    } else {
+        (egui::Color32::BLACK, egui::Color32::WHITE)
+    }
+}
+
+fn color_is_dark(color: egui::Color32) -> bool {
+    let r = color.r() as f32;
+    let g = color.g() as f32;
+    let b = color.b() as f32;
+    (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128.0
+}
+
 fn draw_ellipse(img: &mut RgbaImage, start: egui::Pos2, end: egui::Pos2, color: egui::Color32, size: f32) {
     let rect = normalize_rect(egui::Rect::from_two_pos(start, end));
     let points = ellipse_points(rect, 80);
@@ -1376,6 +1463,115 @@ fn ellipse_points(rect: egui::Rect, steps: usize) -> Vec<egui::Pos2> {
         points.push(egui::pos2(cx + rx * t.cos(), cy + ry * t.sin()));
     }
     points
+}
+
+fn draw_circle_count_preview<F: Fn(egui::Pos2) -> egui::Pos2>(
+    painter: &egui::Painter,
+    to_screen: &F,
+    counter: &CircleCountShape,
+    scale: f32,
+) {
+    let bubble_size = circlecount_bubble_size(counter.size);
+    let (contrast, anti) = circlecount_contrast_colors(counter.color);
+    let center = counter.center;
+    let pointer = counter.pointer;
+    let dir = pointer - center;
+    let len = dir.length();
+    if len > bubble_size {
+        let dir = dir / len;
+        let perp = egui::vec2(-dir.y, dir.x);
+        let p1 = center + perp * bubble_size;
+        let p2 = center - perp * bubble_size;
+        painter.add(egui::Shape::convex_polygon(
+            vec![to_screen(center), to_screen(p1), to_screen(pointer), to_screen(p2)],
+            counter.color,
+            egui::Stroke::new(0.0, counter.color),
+        ));
+    }
+
+    let center_screen = to_screen(center);
+    let outer_radius = (bubble_size + CIRCLECOUNT_PADDING) / scale;
+    let inner_radius = bubble_size / scale;
+    painter.circle_filled(center_screen, outer_radius, anti);
+    painter.circle_stroke(
+        center_screen,
+        outer_radius,
+        egui::Stroke::new(1.0, contrast),
+    );
+    painter.circle_filled(center_screen, inner_radius, counter.color);
+
+    let text = counter.count.to_string();
+    let max_width = inner_radius * 2.0;
+    let mut font_size = (inner_radius * 1.1).max(8.0);
+    loop {
+        let est_width = font_size * 0.6 * text.len().max(1) as f32;
+        if est_width <= max_width || font_size <= 6.0 {
+            break;
+        }
+        font_size -= 1.0;
+    }
+    painter.text(
+        center_screen,
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(font_size),
+        contrast,
+    );
+}
+
+fn draw_circle_count_image(img: &mut RgbaImage, counter: &CircleCountShape) {
+    let bubble_size = circlecount_bubble_size(counter.size);
+    let (contrast, anti) = circlecount_contrast_colors(counter.color);
+    let center = counter.center;
+    let pointer = counter.pointer;
+    let dir = pointer - center;
+    let len = dir.length();
+    if len > bubble_size {
+        let dir = dir / len;
+        let perp = egui::vec2(-dir.y, dir.x);
+        let p1 = center + perp * bubble_size;
+        let p2 = center - perp * bubble_size;
+        fill_quad(img, center, p1, pointer, p2, color32_to_rgba(counter.color));
+    }
+
+    let outer_radius = bubble_size + CIRCLECOUNT_PADDING;
+    draw_filled_circle(img, center, outer_radius, anti);
+    let outline_start = egui::pos2(center.x - outer_radius, center.y - outer_radius);
+    let outline_end = egui::pos2(center.x + outer_radius, center.y + outer_radius);
+    draw_ellipse(img, outline_start, outline_end, contrast, 1.0);
+    draw_filled_circle(img, center, bubble_size, counter.color);
+
+    let text = counter.count.to_string();
+    let scale = circlecount_text_scale(bubble_size, &text);
+    let (text_w, text_h) = text_bitmap_size(&text, scale);
+    let pos = egui::pos2(
+        center.x - text_w as f32 / 2.0,
+        center.y - text_h as f32 / 2.0,
+    );
+    draw_text_bitmap(img, pos, &text, contrast, scale);
+}
+
+fn draw_filled_circle(
+    img: &mut RgbaImage,
+    center: egui::Pos2,
+    radius: f32,
+    color: egui::Color32,
+) {
+    let rgba = color32_to_rgba(color);
+    let min_x = (center.x - radius).floor().max(0.0) as i32;
+    let max_x = (center.x + radius).ceil().min(img.width() as f32) as i32;
+    let min_y = (center.y - radius).floor().max(0.0) as i32;
+    let max_y = (center.y + radius).ceil().min(img.height() as f32) as i32;
+    let r2 = radius * radius;
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let dx = x as f32 + 0.5 - center.x;
+            let dy = y as f32 + 0.5 - center.y;
+            if dx * dx + dy * dy <= r2 {
+                img.put_pixel(x as u32, y as u32, rgba);
+            }
+        }
+    }
 }
 
 fn fill_triangle(img: &mut RgbaImage, a: egui::Pos2, b: egui::Pos2, c: egui::Pos2, color: Rgba<u8>) {
@@ -1402,6 +1598,18 @@ fn fill_triangle(img: &mut RgbaImage, a: egui::Pos2, b: egui::Pos2, c: egui::Pos
             }
         }
     }
+}
+
+fn fill_quad(
+    img: &mut RgbaImage,
+    a: egui::Pos2,
+    b: egui::Pos2,
+    c: egui::Pos2,
+    d: egui::Pos2,
+    color: Rgba<u8>,
+) {
+    fill_triangle(img, a, b, c, color);
+    fill_triangle(img, a, c, d, color);
 }
 
 fn edge_function(a: egui::Pos2, b: egui::Pos2, c: egui::Pos2) -> f32 {
@@ -1566,6 +1774,25 @@ fn draw_text_bitmap(
         draw_char_5x7(img, x, y, ch, color32_to_rgba(color), scale);
         x += 6 * scale as i32;
     }
+}
+
+fn text_bitmap_size(text: &str, scale: u32) -> (i32, i32) {
+    let width = text.chars().count() as i32 * 6 * scale as i32;
+    let height = 7 * scale as i32;
+    (width, height)
+}
+
+fn circlecount_text_scale(bubble_size: f32, text: &str) -> u32 {
+    let mut scale = (bubble_size / 7.0).floor().max(1.0) as u32;
+    let max_width = bubble_size.max(1.0) as i32;
+    while scale > 1 {
+        let (width, _) = text_bitmap_size(text, scale);
+        if width <= max_width {
+            break;
+        }
+        scale -= 1;
+    }
+    scale.max(1)
 }
 
 fn draw_char_5x7(
@@ -1860,6 +2087,16 @@ fn paint_tool_icon(painter: &egui::Painter, rect: egui::Rect, icon: ToolIcon, co
             painter.line_segment([a, b], egui::Stroke::new(3.5, color));
             painter.circle_filled(a, 2.0, color);
             painter.circle_filled(b, 2.0, color);
+        }
+        ToolIcon::CircleCount => {
+            painter.circle_stroke(inner.center(), inner.width().min(inner.height()) * 0.42, stroke);
+            painter.text(
+                inner.center(),
+                egui::Align2::CENTER_CENTER,
+                "1",
+                egui::FontId::proportional(12.0),
+                color,
+            );
         }
         ToolIcon::Text => {
             painter.text(
