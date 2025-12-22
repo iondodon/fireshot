@@ -1176,6 +1176,15 @@ impl eframe::App for EditorApp {
             self.copy_and_close(ctx);
         }
 
+        let save_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
+        let save_shortcut_cmd = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
+        let save_requested = ctx.input_mut(|i| {
+            i.consume_shortcut(&save_shortcut) || i.consume_shortcut(&save_shortcut_cmd)
+        });
+        if save_requested {
+            self.save_image();
+        }
+
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
         let undo_requested = ctx.input_mut(|i| i.consume_shortcut(&undo_shortcut));
         if undo_requested {

@@ -171,36 +171,6 @@ fn diagnose(rt: &tokio::runtime::Runtime, ping: bool) {
         println!("  {} not found", portals_dir.display());
     }
 
-    println!();
-    println!("portals.conf:");
-    let user_path = format!(
-        "{}/.config/xdg-desktop-portal/portals.conf",
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-    );
-    let system_path = "/usr/share/xdg-desktop-portal/portals.conf".to_string();
-    let mut found = false;
-
-    for (label, path) in [("user", user_path), ("system", system_path)] {
-        let p = std::path::Path::new(&path);
-        if p.exists() {
-            found = true;
-            println!("  {} ({})", p.display(), label);
-            match std::fs::read_to_string(p) {
-                Ok(contents) => {
-                    for line in contents.lines() {
-                        println!("    {}", line);
-                    }
-                }
-                Err(err) => println!("    error: {}", err),
-            }
-        } else {
-            println!("  {} ({}) not found", p.display(), label);
-        }
-    }
-    if !found {
-        println!("  no portals.conf files found");
-    }
-
     if ping {
         println!();
         println!("portal ping:");
