@@ -46,6 +46,9 @@ enum Command {
     Daemon,
     /// Print portal and environment diagnostics.
     Diagnose,
+    #[command(name = "__save", hide = true)]
+    /// Internal: save an image from stdin using a portal dialog.
+    InternalSave,
 }
 
 fn main() -> Result<(), CaptureError> {
@@ -64,6 +67,25 @@ fn main() -> Result<(), CaptureError> {
     match command {
         Command::Diagnose => {
             diagnose(&rt);
+        }
+        Command::InternalSave => {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|e| CaptureError::Io(e.to_string()))?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            let image =
+                image::load_from_memory(&buf).map_err(|e| CaptureError::Io(e.to_string()))?;
+            let save_path = run_async(&rt, fireshot_portal::save_file_dialog("screenshot.png"))?;
+            let Some(save_path) = save_path else {
+                return Ok(());
+            };
+            image
+                .save(&save_path)
+                .map_err(|e| CaptureError::Io(e.to_string()))?;
         }
         Command::Gui { delay, path } => {
             let req = CaptureRequest {

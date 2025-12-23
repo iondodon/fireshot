@@ -723,7 +723,7 @@ impl EditorApp {
                                 self.pop_shape();
                             }
                             ToolAction::Copy => self.copy_and_close(ctx),
-                            ToolAction::Save => self.save_image(),
+                            ToolAction::Save => self.save_and_close(ctx),
                             ToolAction::Clear => self.clear_shapes(),
                         }
                     }
@@ -1156,24 +1156,37 @@ impl EditorApp {
         img
     }
 
-    fn save_image(&mut self) {
-        let file = rfd::FileDialog::new()
-            .set_file_name("screenshot.png")
-            .add_filter("PNG", &["png"])
-            .add_filter("JPEG", &["jpg", "jpeg"])
-            .save_file();
-        let Some(path) = file else {
-            return;
-        };
+    fn save_and_close(&mut self, ctx: &egui::Context) {
         let rendered = self.render_image();
-        match rendered.save(&path) {
-            Ok(()) => {
-                self.status = Some(format!("Saved {}", path.display()));
-            }
+        let bytes = match encode_png(&rendered) {
+            Ok(bytes) => bytes,
             Err(err) => {
                 self.status = Some(format!("Save failed: {}", err));
+                return;
             }
+        };
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(err) => {
+                self.status = Some(format!("Save failed: {}", err));
+                return;
+            }
+        };
+        let mut child = match std::process::Command::new(exe)
+            .arg("__save")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => {
+                self.status = Some(format!("Save failed: {}", err));
+                return;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = std::io::Write::write_all(&mut stdin, &bytes);
         }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     fn copy_and_close(&mut self, ctx: &egui::Context) {
@@ -1274,7 +1287,7 @@ impl eframe::App for EditorApp {
             i.consume_shortcut(&save_shortcut) || i.consume_shortcut(&save_shortcut_cmd)
         });
         if save_requested {
-            self.save_image();
+            self.save_and_close(ctx);
         }
 
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
