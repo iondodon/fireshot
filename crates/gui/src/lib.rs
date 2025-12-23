@@ -150,14 +150,6 @@ enum SelectionCorner {
     BottomRight,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SaveDialogStep {
-    Idle,
-    Prepare,
-    Open,
-    Restore,
-}
-
 struct EditorApp {
     base_image: RgbaImage,
     texture_image: egui::ColorImage,
@@ -180,7 +172,6 @@ struct EditorApp {
     text_editor_rect: Option<egui::Rect>,
     shapes_version: u64,
     effect_previews: Vec<EffectPreview>,
-    save_dialog_step: SaveDialogStep,
 }
 
 struct TextInput {
@@ -224,7 +215,6 @@ impl EditorApp {
             text_editor_rect: None,
             shapes_version: 0,
             effect_previews: Vec::new(),
-            save_dialog_step: SaveDialogStep::Idle,
         }
     }
 
@@ -733,7 +723,7 @@ impl EditorApp {
                                 self.pop_shape();
                             }
                             ToolAction::Copy => self.copy_and_close(ctx),
-                            ToolAction::Save => self.request_save_dialog(),
+                            ToolAction::Save => self.save_image(),
                             ToolAction::Clear => self.clear_shapes(),
                         }
                     }
@@ -1166,54 +1156,22 @@ impl EditorApp {
         img
     }
 
-    fn request_save_dialog(&mut self) {
-        if self.save_dialog_step == SaveDialogStep::Idle {
-            self.save_dialog_step = SaveDialogStep::Prepare;
-        }
-    }
-
-    fn run_save_dialog(&mut self, ctx: &egui::Context) {
-        match self.save_dialog_step {
-            SaveDialogStep::Idle => {}
-            SaveDialogStep::Prepare => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                    egui::WindowLevel::Normal,
-                ));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
-                ctx.request_repaint();
-                self.save_dialog_step = SaveDialogStep::Open;
+    fn save_image(&mut self) {
+        let file = rfd::FileDialog::new()
+            .set_file_name("screenshot.png")
+            .add_filter("PNG", &["png"])
+            .add_filter("JPEG", &["jpg", "jpeg"])
+            .save_file();
+        let Some(path) = file else {
+            return;
+        };
+        let rendered = self.render_image();
+        match rendered.save(&path) {
+            Ok(()) => {
+                self.status = Some(format!("Saved {}", path.display()));
             }
-            SaveDialogStep::Open => {
-                let file = rfd::FileDialog::new()
-                    .set_file_name("screenshot.png")
-                    .add_filter("PNG", &["png"])
-                    .add_filter("JPEG", &["jpg", "jpeg"])
-                    .save_file();
-                if let Some(path) = file {
-                    let rendered = self.render_image();
-                    match rendered.save(&path) {
-                        Ok(()) => {
-                            self.status = Some(format!("Saved {}", path.display()));
-                        }
-                        Err(err) => {
-                            self.status = Some(format!("Save failed: {}", err));
-                        }
-                    }
-                }
-                self.save_dialog_step = SaveDialogStep::Restore;
-            }
-            SaveDialogStep::Restore => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                    egui::WindowLevel::AlwaysOnTop,
-                ));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-                ctx.request_repaint();
-                self.save_dialog_step = SaveDialogStep::Idle;
+            Err(err) => {
+                self.status = Some(format!("Save failed: {}", err));
             }
         }
     }
@@ -1259,10 +1217,6 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.save_dialog_step != SaveDialogStep::Idle {
-            self.run_save_dialog(ctx);
-            return;
-        }
         if self.texture.is_none() {
             self.texture = Some(ctx.load_texture(
                 "capture",
@@ -1320,7 +1274,7 @@ impl eframe::App for EditorApp {
             i.consume_shortcut(&save_shortcut) || i.consume_shortcut(&save_shortcut_cmd)
         });
         if save_requested {
-            self.request_save_dialog();
+            self.save_image();
         }
 
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
@@ -1366,15 +1320,6 @@ impl eframe::App for EditorApp {
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-        }
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.save_dialog_step != SaveDialogStep::Idle {
-            egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
-        } else {
-            egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180)
-                .to_normalized_gamma_f32()
         }
     }
 }
