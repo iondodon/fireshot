@@ -565,6 +565,8 @@ impl EditorApp {
             painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
             draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
             draw_selection_hud(painter, sel_rect, sel.rect, response.rect);
+        } else if !self.file_dialog_open {
+            self.draw_help_overlay(&response.ctx, painter, response.rect);
         }
 
         self.draw_cursor_brush_preview(response, scale, painter);
@@ -590,6 +592,71 @@ impl EditorApp {
                 &mut effect_index,
                 &response.ctx,
             );
+        }
+    }
+
+    fn draw_help_overlay(
+        &self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+    ) {
+        let title = "Click and drag to select area";
+        let hints = [
+            "Ctrl+C: copy",
+            "Ctrl+S: save",
+            "Ctrl+Z / Ctrl+Shift+Z: undo/redo",
+            "Mouse wheel: change tool size",
+            "Esc: close",
+        ];
+        let font = egui::FontId::proportional(18.0);
+        let title_color = egui::Color32::from_rgb(245, 245, 245);
+        let hint_color = egui::Color32::from_rgb(220, 220, 220);
+
+        let title_galley =
+            ctx.fonts(|f| f.layout_no_wrap(title.into(), font.clone(), title_color));
+        let hint_galleys: Vec<_> = hints
+            .iter()
+            .map(|text| ctx.fonts(|f| f.layout_no_wrap((*text).into(), font.clone(), hint_color)))
+            .collect();
+
+        let mut width = title_galley.size().x;
+        let mut height = title_galley.size().y;
+        let spacing = 6.0;
+        for galley in &hint_galleys {
+            width = width.max(galley.size().x);
+            height += spacing + galley.size().y;
+        }
+
+        let padding = egui::vec2(18.0, 14.0);
+        let box_size = egui::vec2(width + padding.x * 2.0, height + padding.y * 2.0);
+        let box_rect = egui::Rect::from_center_size(rect.center(), box_size);
+        painter.rect_filled(box_rect, 10.0, egui::Color32::from_rgb(12, 12, 12));
+        painter.rect_stroke(
+            box_rect,
+            10.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
+        );
+
+        let x = box_rect.min.x + padding.x;
+        let mut y = box_rect.min.y + padding.y;
+        painter.text(
+            egui::pos2(x, y),
+            egui::Align2::LEFT_TOP,
+            title,
+            font.clone(),
+            title_color,
+        );
+        y += title_galley.size().y + spacing;
+        for (idx, hint) in hints.iter().enumerate() {
+            painter.text(
+                egui::pos2(x, y),
+                egui::Align2::LEFT_TOP,
+                *hint,
+                font.clone(),
+                hint_color,
+            );
+            y += hint_galleys[idx].size().y + spacing;
         }
     }
 
