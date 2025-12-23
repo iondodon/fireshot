@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_file_dialog::{DialogState, FileDialog};
 use std::io::Cursor;
 use fireshot_core::CaptureError;
 use image::{DynamicImage, Rgba, RgbaImage};
@@ -150,6 +151,8 @@ enum SelectionCorner {
     BottomRight,
 }
 
+const FILE_DIALOG_SIZE: egui::Vec2 = egui::Vec2 { x: 720.0, y: 480.0 };
+
 struct EditorApp {
     base_image: RgbaImage,
     texture_image: egui::ColorImage,
@@ -172,6 +175,8 @@ struct EditorApp {
     text_editor_rect: Option<egui::Rect>,
     shapes_version: u64,
     effect_previews: Vec<EffectPreview>,
+    file_dialog: FileDialog,
+    file_dialog_open: bool,
 }
 
 struct TextInput {
@@ -215,6 +220,10 @@ impl EditorApp {
             text_editor_rect: None,
             shapes_version: 0,
             effect_previews: Vec::new(),
+            file_dialog: FileDialog::new()
+                .default_file_name("screenshot.png")
+                .default_size(FILE_DIALOG_SIZE),
+            file_dialog_open: false,
         }
     }
 
@@ -223,6 +232,9 @@ impl EditorApp {
     }
 
     fn handle_input(&mut self, response: &egui::Response) {
+        if self.file_dialog_open {
+            return;
+        }
         let scale = response.ctx.pixels_per_point();
         let pointer = response.ctx.input(|i| i.pointer.clone());
         let Some(pointer_pos) = pointer.hover_pos() else {
@@ -636,6 +648,9 @@ impl EditorApp {
     }
 
     fn show_tool_buttons(&mut self, ctx: &egui::Context) {
+        if self.file_dialog_open {
+            return;
+        }
         let Some(sel) = self.selection else {
             return;
         };
@@ -736,6 +751,9 @@ impl EditorApp {
     }
 
     fn show_tool_controls(&mut self, ctx: &egui::Context) {
+        if self.file_dialog_open {
+            return;
+        }
         let Some(sel) = self.selection else {
             return;
         };
@@ -815,6 +833,9 @@ impl EditorApp {
     }
 
     fn show_text_editor(&mut self, ctx: &egui::Context) {
+        if self.file_dialog_open {
+            return;
+        }
         self.text_editor_rect = None;
         let Some(input) = &mut self.text_input else {
             return;
@@ -1157,23 +1178,15 @@ impl EditorApp {
     }
 
     fn save_image(&mut self) {
-        let file = rfd::FileDialog::new()
-            .set_file_name("screenshot.png")
-            .add_filter("PNG", &["png"])
-            .add_filter("JPEG", &["jpg", "jpeg"])
-            .save_file();
-        let Some(path) = file else {
-            return;
-        };
-        let rendered = self.render_image();
-        match rendered.save(&path) {
-            Ok(()) => {
-                self.status = Some(format!("Saved {}", path.display()));
-            }
-            Err(err) => {
-                self.status = Some(format!("Save failed: {}", err));
-            }
+        if let Some(rect) = self.last_image_rect {
+            let pos = rect.center() - FILE_DIALOG_SIZE * 0.5;
+            self.file_dialog = FileDialog::new()
+                .default_file_name("screenshot.png")
+                .default_size(FILE_DIALOG_SIZE)
+                .default_pos(pos);
         }
+        self.file_dialog.save_file();
+        self.file_dialog_open = true;
     }
 
     fn copy_and_close(&mut self, ctx: &egui::Context) {
@@ -1243,6 +1256,27 @@ impl eframe::App for EditorApp {
                     self.draw_overlay(&response, painter);
                 }
             });
+
+        self.file_dialog.update(ctx);
+        self.file_dialog_open = matches!(self.file_dialog.state(), DialogState::Open);
+
+        if let Some(path) = self.file_dialog.take_selected() {
+            let rendered = self.render_image();
+            match rendered.save(&path) {
+                Ok(()) => {
+                    self.status = Some(format!("Saved {}", path.display()));
+                }
+                Err(err) => {
+                    self.status = Some(format!("Save failed: {}", err));
+                }
+            }
+            self.file_dialog_open = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.file_dialog_open && matches!(self.file_dialog.state(), DialogState::Closed) {
+            self.file_dialog_open = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         self.show_tool_buttons(ctx);
         self.show_tool_controls(ctx);
