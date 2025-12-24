@@ -10,7 +10,7 @@ use zbus::dbus_interface;
 #[command(
     name = "fireshot",
     version,
-    about = "Wayland-first Fireshot rewrite",
+    about = "Wayland-first screenshot app",
     after_help = "Examples:\n  fireshot gui\n  fireshot gui -d 2000 -p /tmp/cap.png\n  fireshot full -p /tmp/cap.png\n  fireshot full --edit\n\nPortal notes:\n  Requires xdg-desktop-portal and a backend (wlr/gnome/kde).",
     arg_required_else_help = true
 )]
@@ -170,7 +170,6 @@ fn diagnose(rt: &tokio::runtime::Runtime) {
     } else {
         println!("  {} not found", portals_dir.display());
     }
-
 }
 
 fn run_async<T>(
@@ -193,12 +192,20 @@ impl FireshotService {
 
     fn full(&self, delay_ms: u64, path: String) {
         let path = if path.is_empty() { None } else { Some(path) };
-        spawn_capture(CaptureKind::Full { delay_ms, path, edit: false });
+        spawn_capture(CaptureKind::Full {
+            delay_ms,
+            path,
+            edit: false,
+        });
     }
 
     fn full_gui(&self, delay_ms: u64, path: String) {
         let path = if path.is_empty() { None } else { Some(path) };
-        spawn_capture(CaptureKind::Full { delay_ms, path, edit: true });
+        spawn_capture(CaptureKind::Full {
+            delay_ms,
+            path,
+            edit: true,
+        });
     }
 
     fn quit(&self) {
@@ -213,8 +220,15 @@ impl FireshotService {
 }
 
 enum CaptureKind {
-    Gui { delay_ms: u64, path: Option<String> },
-    Full { delay_ms: u64, path: Option<String>, edit: bool },
+    Gui {
+        delay_ms: u64,
+        path: Option<String>,
+    },
+    Full {
+        delay_ms: u64,
+        path: Option<String>,
+        edit: bool,
+    },
 }
 
 enum DaemonCommand {
@@ -299,7 +313,11 @@ fn spawn_capture(kind: CaptureKind) {
                     cmd.arg("-p").arg(path);
                 }
             }
-            CaptureKind::Full { delay_ms, path, edit } => {
+            CaptureKind::Full {
+                delay_ms,
+                path,
+                edit,
+            } => {
                 cmd.arg("full");
                 if delay_ms > 0 {
                     cmd.arg("-d").arg(delay_ms.to_string());
