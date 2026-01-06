@@ -540,10 +540,12 @@ impl EditorApp {
             None
         };
         let mut effect_index = 0usize;
+        let idle_dim = egui::Color32::from_rgba_premultiplied(0, 0, 0, 70);
+        let selection_dim = egui::Color32::from_rgba_premultiplied(0, 0, 0, 110);
+
         if let Some(sel) = self.selection {
             let img_rect = response.rect;
             let sel_rect = egui::Rect::from_two_pos(to_screen(sel.rect.min), to_screen(sel.rect.max));
-            let dim_color = egui::Color32::from_rgba_premultiplied(0, 0, 0, 160);
 
             let top = egui::Rect::from_min_max(img_rect.min, egui::pos2(img_rect.max.x, sel_rect.min.y));
             let bottom =
@@ -557,15 +559,16 @@ impl EditorApp {
                 egui::pos2(img_rect.max.x, sel_rect.max.y),
             );
 
-            painter.rect_filled(top, 0.0, dim_color);
-            painter.rect_filled(bottom, 0.0, dim_color);
-            painter.rect_filled(left, 0.0, dim_color);
-            painter.rect_filled(right, 0.0, dim_color);
+            painter.rect_filled(top, 0.0, selection_dim);
+            painter.rect_filled(bottom, 0.0, selection_dim);
+            painter.rect_filled(left, 0.0, selection_dim);
+            painter.rect_filled(right, 0.0, selection_dim);
 
             painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
             draw_handles(painter, sel_rect, 4.0, egui::Color32::WHITE);
             draw_selection_hud(painter, sel_rect, sel.rect, response.rect);
         } else if !self.file_dialog_open {
+            painter.rect_filled(response.rect, 0.0, idle_dim);
             self.draw_help_overlay(&response.ctx, painter, response.rect);
         }
 
